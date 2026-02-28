@@ -9,6 +9,21 @@ type linkItem struct {
 	link model.Link
 }
 
-func (i linkItem) Title() string       { return i.link.Title }
-func (i linkItem) Description() string { return i.link.URL }
+func (i linkItem) Title() string {
+	if i.link.Title == "" {
+		return i.link.URL
+	}
+	return i.link.Title
+}
+
+func (i linkItem) Description() string {
+	if i.link.Title == "" {
+		return "Awaiting enrichment..."
+	}
+	if i.link.Description != "" {
+		return i.link.Description
+	}
+	return i.link.URL
+}
+
 func (i linkItem) FilterValue() string { return i.link.Title + " " + i.link.URL }

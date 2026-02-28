@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -49,5 +50,12 @@ func InitSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("create links table: %w", err)
 	}
+
+	// Migration: add enriched column if it doesn't exist
+	_, err = db.Exec(`ALTER TABLE links ADD COLUMN enriched INTEGER DEFAULT 0`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("add enriched column: %w", err)
+	}
+
 	return nil
 }

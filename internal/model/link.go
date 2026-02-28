@@ -17,6 +17,7 @@ type Link struct {
 	Description string
 	Tags        []string
 	Status      Status
+	Enriched    bool
 	DateAdded   time.Time
 }
 

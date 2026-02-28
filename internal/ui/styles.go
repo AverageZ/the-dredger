@@ -36,4 +36,9 @@ var (
 
 	itemDescStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#9B9B9B"))
+
+	enrichmentBarStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#FFFDF5")).
+				Background(lipgloss.Color("#4A3D6B")).
+				Padding(0, 1)
 )
