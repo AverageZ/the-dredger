@@ -44,6 +44,18 @@ type TriggerDredgeLinkMsg struct {
 	URL    string
 }
 
+type GridLinksLoadedMsg struct {
+	Links []model.Link
+	Err   error
+}
+
+type GridExitMsg struct{}
+
+type SerendipityResultMsg struct {
+	Links []model.Link
+	Err   error
+}
+
 // DredgeLinkResultMsg returns the result of a single-link dredge.
 type DredgeLinkResultMsg struct {
 	LinkID      int64

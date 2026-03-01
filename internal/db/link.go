@@ -268,6 +268,36 @@ func CountLinksByStatus(db *sql.DB) (LinkStats, error) {
 	return stats, rows.Err()
 }
 
+func GetRandomSavedLinks(database *sql.DB, count int) ([]model.Link, error) {
+	rows, err := database.Query(`SELECT `+linkSelectCols+` FROM links WHERE status = ? ORDER BY RANDOM()`, int(model.Saved))
+	if err != nil {
+		return nil, fmt.Errorf("query random saved links: %w", err)
+	}
+	defer rows.Close()
+
+	seen := make(map[string]bool)
+	var result []model.Link
+	for rows.Next() {
+		l, err := scanLink(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan link: %w", err)
+		}
+		firstTag := ""
+		if len(l.Tags) > 0 {
+			firstTag = l.Tags[0]
+		}
+		if seen[firstTag] {
+			continue
+		}
+		seen[firstTag] = true
+		result = append(result, l)
+		if len(result) >= count {
+			break
+		}
+	}
+	return result, rows.Err()
+}
+
 func DeletePrunedLinks(db *sql.DB) (int64, error) {
 	res, err := db.Exec(`DELETE FROM links WHERE status = ?`, int(model.Pruned))
 	if err != nil {

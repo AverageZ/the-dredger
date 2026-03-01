@@ -22,6 +22,7 @@ type appMode int
 const (
 	modeList  appMode = 0
 	modeFocus appMode = 1
+	modeGrid  appMode = 2
 )
 
 type listView int
@@ -39,6 +40,7 @@ type App struct {
 
 	mode     appMode
 	focus    FocusModel
+	grid     GridModel
 	listView listView
 
 	spinner      spinner.Model
@@ -168,6 +170,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.list.SetSize(msg.Width-4, listHeight)
 		a.focus.width = msg.Width
 		a.focus.height = msg.Height
+		a.grid.width = msg.Width
+		a.grid.height = msg.Height
+		a.grid.recalcLayout()
 		return a, nil
 
 	case FocusExitMsg:
@@ -181,6 +186,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Delegate to focus mode
 	if a.mode == modeFocus {
 		return a.updateFocus(msg)
+	}
+
+	if a.mode == modeGrid {
+		return a.updateGrid(msg)
 	}
 
 	return a.updateList(msg)
@@ -208,6 +217,29 @@ func (a App) updateFocus(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	a.focus, cmd = a.focus.Update(msg)
+	return a, cmd
+}
+
+func (a App) updateGrid(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if !a.grid.searching && !a.grid.showSerendipity {
+			switch msg.String() {
+			case "q", "ctrl+c":
+				if a.dredgeCancel != nil {
+					a.dredgeCancel()
+				}
+				return a, tea.Quit
+			}
+		}
+
+	case GridExitMsg:
+		a.mode = modeList
+		return a, a.loadSavedLinks
+	}
+
+	var cmd tea.Cmd
+	a.grid, cmd = a.grid.Update(msg)
 	return a, cmd
 }
 
@@ -245,6 +277,12 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.listView = viewPending
 			a.list.Title = "The Dredger — Pending"
 			return a, a.loadLinks
+		case "g":
+			if a.listView == viewSaved {
+				a.mode = modeGrid
+				a.grid = NewGridModel(a.db, a.width, a.height)
+				return a, a.grid.Init()
+			}
 		case "r":
 			if !a.dredging {
 				return a, a.startDredge()
@@ -339,6 +377,8 @@ func (a App) View() tea.View {
 
 	if a.mode == modeFocus {
 		content = a.focus.View()
+	} else if a.mode == modeGrid {
+		content = a.grid.View()
 	} else {
 		var enrichmentBar string
 		if a.dredging {
@@ -353,10 +393,16 @@ func (a App) View() tea.View {
 			viewLabel = "saved"
 		}
 
+		gridHint := ""
+		if a.listView == viewSaved {
+			gridHint = statusTextStyle.Render("g") + " grid  "
+		}
+
 		statusBar := statusBarStyle.Width(a.width).Render(
 			statusTextStyle.Render("q") + " quit  " +
 				statusTextStyle.Render("f") + " focus  " +
 				statusTextStyle.Render("b") + " " + viewLabel + "  " +
+				gridHint +
 				statusTextStyle.Render("r") + " dredge  " +
 				statusTextStyle.Render("/") + " filter  " +
 				statusTextStyle.Render("↑↓") + " navigate",
