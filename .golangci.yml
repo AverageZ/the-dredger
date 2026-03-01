@@ -16,9 +16,11 @@ linters:
     goconst:
       min-occurrences: 3
   exclusions:
-    max-issues-per-linter: 20
-    max-same-issues: 5
     rules:
       - path: _test\.go
         linters:
           - errcheck
+
+issues:
+  max-issues-per-linter: 20
+  max-same-issues: 5
