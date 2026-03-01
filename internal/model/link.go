@@ -13,7 +13,7 @@ const (
 type DredgeState int
 
 const (
-	DredgeNone     DredgeState = iota
+	DredgeNone DredgeState = iota
 	DredgeCrawling
 	DredgeCrunching
 	DredgeComplete
@@ -21,17 +21,17 @@ const (
 )
 
 type Link struct {
-	ID           int64
-	URL          string
-	Title        string
-	Description  string
-	Summary      string
-	Tags         []string
-	Status       Status
-	Enriched     bool
-	DredgeState  DredgeState
-	DredgeError  string
-	DateAdded    time.Time
+	ID          int64
+	URL         string
+	Title       string
+	Description string
+	Summary     string
+	Tags        []string
+	Status      Status
+	Enriched    bool
+	DredgeState DredgeState
+	DredgeError string
+	DateAdded   time.Time
 }
 
 func (s Status) String() string {

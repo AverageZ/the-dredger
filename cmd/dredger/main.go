@@ -84,7 +84,7 @@ func runClean(database *sql.DB) {
 func runReset(database *sql.DB) {
 	fmt.Print("This will delete ALL links. Are you sure? [y/N] ")
 	var answer string
-	fmt.Scanln(&answer)
+	_, _ = fmt.Scanln(&answer)
 	if answer != "y" && answer != "Y" {
 		fmt.Println("Aborted.")
 		return

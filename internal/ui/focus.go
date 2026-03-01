@@ -90,7 +90,6 @@ func (f FocusModel) prefetchNextLink() tea.Msg {
 func (f FocusModel) Init() tea.Cmd {
 	if f.startLink != nil {
 		link := f.startLink
-		f.startLink = nil
 		return func() tea.Msg {
 			return NextLinkLoadedMsg{Link: link}
 		}
@@ -166,7 +165,7 @@ func (f FocusModel) updateTagging(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		tag := strings.TrimSpace(f.tagInput.Value())
 		if tag != "" && f.current != nil {
 			f.current.Tags = append(f.current.Tags, tag)
-			db.UpdateLink(f.db, *f.current)
+			_ = db.UpdateLink(f.db, *f.current)
 		}
 		f.tagging = false
 		f.tagInput.Reset()
@@ -199,7 +198,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 				Action: "moved to pending",
 			})
 			f.current.Status = model.Unprocessed
-			db.UpdateLink(f.db, *f.current)
+			_ = db.UpdateLink(f.db, *f.current)
 			f.anim.start(-80, snoozeColor)
 			return f, animTick()
 		}
@@ -209,7 +208,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			Action: "pruned",
 		})
 		f.current.Status = model.Pruned
-		db.UpdateLink(f.db, *f.current)
+		_ = db.UpdateLink(f.db, *f.current)
 		f.pruned++
 		f.anim.start(-80, pruneColor)
 		return f, animTick()
@@ -223,7 +222,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			Action: "kept",
 		})
 		f.current.Status = model.Saved
-		db.UpdateLink(f.db, *f.current)
+		_ = db.UpdateLink(f.db, *f.current)
 		f.kept++
 		f.anim.start(80, keepColor)
 		return f, animTick()
@@ -237,7 +236,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			Action: "snoozed",
 		})
 		snoozeUntil := time.Now().Add(7 * 24 * time.Hour)
-		db.SnoozeLink(f.db, f.current.ID, snoozeUntil)
+		_ = db.SnoozeLink(f.db, f.current.ID, snoozeUntil)
 		f.snoozed++
 		f.anim.start(80, snoozeColor)
 		return f, animTick()
@@ -255,7 +254,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			return f, nil
 		}
 		// Open URL in default browser
-		exec.Command("open", f.current.URL).Start()
+		_ = exec.Command("open", f.current.URL).Start()
 		return f, nil
 
 	case "d":
@@ -289,7 +288,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		f.undoStack = f.undoStack[:len(f.undoStack)-1]
 
 		// Restore the link to its previous state
-		db.RestoreLink(f.db, frame.Link)
+		_ = db.RestoreLink(f.db, frame.Link)
 		restored := frame.Link
 		f.current = &restored
 

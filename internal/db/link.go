@@ -132,7 +132,7 @@ func DeleteLink(db *sql.DB, id int64) error {
 }
 
 func GetUnprocessedLinks(db *sql.DB) ([]model.Link, error) {
-	rows, err := db.Query(`SELECT `+linkSelectCols+` FROM links WHERE enriched = 0 ORDER BY date_added ASC`)
+	rows, err := db.Query(`SELECT ` + linkSelectCols + ` FROM links WHERE enriched = 0 ORDER BY date_added ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query unprocessed links: %w", err)
 	}
@@ -159,7 +159,7 @@ func UpdateLinkMeta(db *sql.DB, id int64, title, description string) error {
 
 func GetNextUnprocessed(db *sql.DB) (*model.Link, error) {
 	row := db.QueryRow(
-		`SELECT `+linkSelectCols+`
+		`SELECT ` + linkSelectCols + `
 		 FROM links WHERE status = 0 AND date_added <= datetime('now')
 		 ORDER BY date_added ASC LIMIT 1`,
 	)

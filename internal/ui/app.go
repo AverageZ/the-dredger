@@ -127,7 +127,7 @@ func waitForResult(ch <-chan dredge.Result) tea.Cmd {
 func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 	return func() tea.Msg {
 		// Set state to crawling
-		db.UpdateDredgeState(a.db, linkID, model.DredgeCrawling, "")
+		_ = db.UpdateDredgeState(a.db, linkID, model.DredgeCrawling, "")
 
 		svc := dredge.NewService(a.db, 1)
 		link := model.Link{ID: linkID, URL: url}

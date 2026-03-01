@@ -3,19 +3,8 @@ package ui
 import "charm.land/lipgloss/v2"
 
 var (
-	activeColor   = lipgloss.Color("#7D56F4")
-	inactiveColor = lipgloss.Color("#626262")
-	accentColor   = lipgloss.Color("#04B575")
-
-	activeBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(activeColor).
-				Padding(0, 1)
-
-	inactiveBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(inactiveColor).
-				Padding(0, 1)
+	activeColor = lipgloss.Color("#7D56F4")
+	accentColor = lipgloss.Color("#04B575")
 
 	titleStyle = lipgloss.NewStyle().
 			Foreground(activeColor).
@@ -30,13 +19,6 @@ var (
 	statusTextStyle = lipgloss.NewStyle().
 			Foreground(accentColor)
 
-	itemTitleStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFDF5")).
-			Bold(true)
-
-	itemDescStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9B9B9B"))
-
 	enrichmentBarStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("#FFFDF5")).
 				Background(lipgloss.Color("#4A3D6B")).
@@ -49,9 +31,9 @@ var (
 
 	// Focus mode card styles
 	cardBorderStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(activeColor).
-				Padding(1, 2)
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(activeColor).
+			Padding(1, 2)
 
 	domainHeaderStyle = lipgloss.NewStyle().
 				Bold(true).
@@ -60,29 +42,29 @@ var (
 				Padding(0, 1)
 
 	cardTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("#FFFDF5"))
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFDF5"))
 
 	cardURLStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#9B9B9B")).
-				Italic(true)
+			Foreground(lipgloss.Color("#9B9B9B")).
+			Italic(true)
 
 	cardDescStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#C0C0C0"))
+			Foreground(lipgloss.Color("#C0C0C0"))
 
 	tagPillStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FFFDF5")).
-				Background(activeColor).
-				Padding(0, 1)
+			Foreground(lipgloss.Color("#FFFDF5")).
+			Background(activeColor).
+			Padding(0, 1)
 
 	undoToastStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#FFFDF5")).
-				Background(lipgloss.Color("#4A3D6B")).
-				Italic(true).
-				Padding(0, 1)
+			Foreground(lipgloss.Color("#FFFDF5")).
+			Background(lipgloss.Color("#4A3D6B")).
+			Italic(true).
+			Padding(0, 1)
 
 	completionStyle = lipgloss.NewStyle().
-				Foreground(keepColor).
-				Bold(true).
-				Align(lipgloss.Center)
+			Foreground(keepColor).
+			Bold(true).
+			Align(lipgloss.Center)
 )

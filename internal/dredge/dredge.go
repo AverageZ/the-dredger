@@ -77,7 +77,7 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 				}
 
 				// Set state to crawling
-				db.UpdateDredgeState(s.db, j.id, model.DredgeCrawling, "")
+				_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCrawling, "")
 
 				delay := time.Duration(200+rand.IntN(600)) * time.Millisecond
 				time.Sleep(delay)
@@ -90,7 +90,7 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 					_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
 				} else {
 					// Crunching phase: LLM summarization
-					db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, "")
+					_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, "")
 					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url)
 					if err != nil {
 						// Crawl succeeded but crunch failed — still save crawl data
