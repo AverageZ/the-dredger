@@ -20,6 +20,7 @@ type Result struct {
 	Description string
 	Summary     string
 	Tags        []string
+	Comments    []string
 	Err         error
 }
 
@@ -91,7 +92,7 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 				} else {
 					// Crunching phase: LLM summarization
 					_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, "")
-					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url)
+					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url, result.Comments)
 					if err != nil {
 						// Crawl succeeded but crunch failed — still save crawl data
 						_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
@@ -117,8 +118,12 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 	close(s.results)
 }
 
-func (s *Service) fetchOne(ctx context.Context, id int64, url string) Result {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (s *Service) fetchOne(ctx context.Context, id int64, rawURL string) Result {
+	// Resolve aggregator URLs (e.g. HN comments) to article URLs
+	resolved := ResolveURL(s.client, rawURL)
+	scrapeURL := resolved.URL
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, scrapeURL, nil)
 	if err != nil {
 		return Result{LinkID: id, Err: fmt.Errorf("create request: %w", err)}
 	}
@@ -126,7 +131,7 @@ func (s *Service) fetchOne(ctx context.Context, id int64, url string) Result {
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return Result{LinkID: id, Err: fmt.Errorf("fetch %s: %w", url, err)}
+		return Result{LinkID: id, Err: fmt.Errorf("fetch %s: %w", scrapeURL, err)}
 	}
 	defer resp.Body.Close()
 
@@ -135,12 +140,13 @@ func (s *Service) fetchOne(ctx context.Context, id int64, url string) Result {
 
 	title := meta.Title
 	if title == "" {
-		title = url
+		title = rawURL
 	}
 
 	return Result{
 		LinkID:      id,
 		Title:       title,
 		Description: meta.Description,
+		Comments:    resolved.Comments,
 	}
 }
