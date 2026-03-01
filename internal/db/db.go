@@ -51,10 +51,30 @@ func InitSchema(db *sql.DB) error {
 		return fmt.Errorf("create links table: %w", err)
 	}
 
-	// Migration: add enriched column if it doesn't exist
-	_, err = db.Exec(`ALTER TABLE links ADD COLUMN enriched INTEGER DEFAULT 0`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
-		return fmt.Errorf("add enriched column: %w", err)
+	// Migrations: add columns if they don't exist
+	migrations := []string{
+		`ALTER TABLE links ADD COLUMN enriched INTEGER DEFAULT 0`,
+		`ALTER TABLE links ADD COLUMN dredge_state INTEGER DEFAULT 0`,
+		`ALTER TABLE links ADD COLUMN dredge_error TEXT DEFAULT ''`,
+		`ALTER TABLE links ADD COLUMN summary TEXT DEFAULT ''`,
+	}
+	for _, m := range migrations {
+		_, err = db.Exec(m)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			return fmt.Errorf("migration %q: %w", m, err)
+		}
+	}
+
+	// Indexes for performance
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_links_status ON links(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_links_enriched ON links(enriched)`,
+		`CREATE INDEX IF NOT EXISTS idx_links_dredge_state ON links(dredge_state)`,
+	}
+	for _, idx := range indexes {
+		if _, err := db.Exec(idx); err != nil {
+			return fmt.Errorf("create index: %w", err)
+		}
 	}
 
 	return nil

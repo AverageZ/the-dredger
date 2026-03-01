@@ -33,9 +33,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) >= 3 && os.Args[1] == "import" {
-		runImport(database, os.Args[2])
-		return
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "import":
+			if len(os.Args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: dredger import <file>")
+				os.Exit(1)
+			}
+			runImport(database, os.Args[2])
+			return
+		case "stats":
+			runStats(database)
+			return
+		case "clean":
+			runClean(database)
+			return
+		case "reset":
+			runReset(database)
+			return
+		}
 	}
 
 	app := ui.NewApp(database)
@@ -44,6 +60,41 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func runStats(database *sql.DB) {
+	stats, err := db.CountLinksByStatus(database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting stats: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Pending: %d\nSaved:   %d\nPruned:  %d\nTotal:   %d\n",
+		stats.Unprocessed, stats.Saved, stats.Pruned, stats.Total)
+}
+
+func runClean(database *sql.DB) {
+	removed, err := db.DeletePrunedLinks(database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error cleaning pruned links: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Removed %d pruned links.\n", removed)
+}
+
+func runReset(database *sql.DB) {
+	fmt.Print("This will delete ALL links. Are you sure? [y/N] ")
+	var answer string
+	fmt.Scanln(&answer)
+	if answer != "y" && answer != "Y" {
+		fmt.Println("Aborted.")
+		return
+	}
+	removed, err := db.DeleteAllLinks(database)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error resetting database: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Deleted %d links. Database is now empty.\n", removed)
 }
 
 func runImport(database *sql.DB, path string) {

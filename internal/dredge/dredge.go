@@ -18,12 +18,15 @@ type Result struct {
 	LinkID      int64
 	Title       string
 	Description string
+	Summary     string
+	Tags        []string
 	Err         error
 }
 
 type Service struct {
 	db      *sql.DB
 	client  *http.Client
+	ollama  *OllamaClient
 	workers int
 	results chan Result
 }
@@ -34,6 +37,7 @@ func NewService(database *sql.DB, workers int) *Service {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		ollama:  NewOllamaClient("", ""),
 		workers: workers,
 		results: make(chan Result, workers*2),
 	}
@@ -60,6 +64,8 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 	}
 	close(jobs)
 
+	ollamaAvailable := s.ollama.Ping()
+
 	var wg sync.WaitGroup
 	for range s.workers {
 		wg.Add(1)
@@ -70,12 +76,32 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 					return
 				}
 
+				// Set state to crawling
+				db.UpdateDredgeState(s.db, j.id, model.DredgeCrawling, "")
+
 				delay := time.Duration(200+rand.IntN(600)) * time.Millisecond
 				time.Sleep(delay)
 
 				result := s.fetchOne(ctx, j.id, j.url)
-				if result.Err == nil {
-					_ = db.UpdateLinkMeta(s.db, j.id, result.Title, result.Description)
+				if result.Err != nil {
+					_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, fmt.Sprintf("crawl: %s", result.Err.Error()))
+				} else if !ollamaAvailable {
+					// Ollama not running — save crawl data, skip crunch
+					_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
+				} else {
+					// Crunching phase: LLM summarization
+					db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, "")
+					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url)
+					if err != nil {
+						// Crawl succeeded but crunch failed — still save crawl data
+						_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
+						_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, err.Error())
+						result.Err = err
+					} else {
+						result.Summary = summary
+						result.Tags = tags
+						_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, summary, tags)
+					}
 				}
 
 				select {

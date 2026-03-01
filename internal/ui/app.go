@@ -12,15 +12,34 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/dredge"
+	"github.com/alexzajac/the-dredger/internal/model"
 )
 
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
+
+type appMode int
+
+const (
+	modeList  appMode = 0
+	modeFocus appMode = 1
+)
+
+type listView int
+
+const (
+	viewPending listView = iota
+	viewSaved
+)
 
 type App struct {
 	db     *sql.DB
 	list   list.Model
 	width  int
 	height int
+
+	mode     appMode
+	focus    FocusModel
+	listView listView
 
 	spinner      spinner.Model
 	progress     progress.Model
@@ -34,7 +53,7 @@ type App struct {
 func NewApp(database *sql.DB) App {
 	delegate := list.NewDefaultDelegate()
 	l := list.New([]list.Item{}, delegate, 0, 0)
-	l.Title = "The Dredger"
+	l.Title = "The Dredger — Pending"
 	l.Styles.Title = titleStyle
 
 	s := spinner.New()
@@ -48,6 +67,7 @@ func NewApp(database *sql.DB) App {
 		list:     l,
 		spinner:  s,
 		progress: p,
+		listView: viewPending,
 	}
 }
 
@@ -56,7 +76,12 @@ func (a App) Init() tea.Cmd {
 }
 
 func (a App) loadLinks() tea.Msg {
-	links, err := db.GetLinks(a.db)
+	links, err := db.GetLinksByStatus(a.db, model.Unprocessed)
+	return LinksLoadedMsg{Links: links, Err: err}
+}
+
+func (a App) loadSavedLinks() tea.Msg {
+	links, err := db.GetLinksByStatus(a.db, model.Saved)
 	return LinksLoadedMsg{Links: links, Err: err}
 }
 
@@ -99,6 +124,38 @@ func waitForResult(ch <-chan dredge.Result) tea.Cmd {
 	}
 }
 
+func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
+	return func() tea.Msg {
+		// Set state to crawling
+		db.UpdateDredgeState(a.db, linkID, model.DredgeCrawling, "")
+
+		svc := dredge.NewService(a.db, 1)
+		link := model.Link{ID: linkID, URL: url}
+		ctx := context.Background()
+
+		go svc.Run(ctx, []model.Link{link})
+
+		result := <-svc.Results()
+
+		if result.Err != nil {
+			return DredgeLinkResultMsg{
+				LinkID: linkID,
+				State:  model.DredgeCapsized,
+				Error:  result.Err.Error(),
+			}
+		}
+
+		return DredgeLinkResultMsg{
+			LinkID:      linkID,
+			State:       model.DredgeComplete,
+			Title:       result.Title,
+			Description: result.Description,
+			Summary:     result.Summary,
+			Tags:        result.Tags,
+		}
+	}
+}
+
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -109,8 +166,28 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			listHeight -= 1
 		}
 		a.list.SetSize(msg.Width-4, listHeight)
+		a.focus.width = msg.Width
+		a.focus.height = msg.Height
 		return a, nil
 
+	case FocusExitMsg:
+		a.mode = modeList
+		if a.listView == viewSaved {
+			return a, a.loadSavedLinks
+		}
+		return a, a.loadLinks
+	}
+
+	// Delegate to focus mode
+	if a.mode == modeFocus {
+		return a.updateFocus(msg)
+	}
+
+	return a.updateList(msg)
+}
+
+func (a App) updateFocus(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -118,10 +195,62 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.dredgeCancel()
 			}
 			return a, tea.Quit
+		}
+
+	case TriggerDredgeLinkMsg:
+		cmd := a.dredgeSingleLink(msg.LinkID, msg.URL)
+		// Update current link state to crawling immediately
+		if a.focus.current != nil && a.focus.current.ID == msg.LinkID {
+			a.focus.current.DredgeState = model.DredgeCrawling
+		}
+		return a, cmd
+	}
+
+	var cmd tea.Cmd
+	a.focus, cmd = a.focus.Update(msg)
+	return a, cmd
+}
+
+func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		if a.list.FilterState() == list.Filtering {
+			break // let list handle filter input
+		}
+		switch msg.String() {
+		case "q", "ctrl+c":
+			if a.dredgeCancel != nil {
+				a.dredgeCancel()
+			}
+			return a, tea.Quit
+		case "f":
+			a.mode = modeFocus
+			ctx := focusPending
+			if a.listView == viewSaved {
+				ctx = focusSaved
+			}
+			var startLink *model.Link
+			if sel, ok := a.list.SelectedItem().(linkItem); ok {
+				link := sel.link
+				startLink = &link
+			}
+			a.focus = NewFocusModel(a.db, a.width, a.height, ctx, startLink)
+			return a, a.focus.Init()
+		case "b":
+			if a.listView == viewPending {
+				a.listView = viewSaved
+				a.list.Title = "The Dredger — Saved"
+				return a, a.loadSavedLinks
+			}
+			a.listView = viewPending
+			a.list.Title = "The Dredger — Pending"
+			return a, a.loadLinks
 		case "r":
 			if !a.dredging {
 				return a, a.startDredge()
 			}
+		case "/":
+			a.list.SetFilteringEnabled(true)
 		}
 
 	case LinksLoadedMsg:
@@ -133,7 +262,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items[i] = linkItem{link: l}
 		}
 		a.list.SetItems(items)
-		return a, a.startDredge()
+		if a.listView == viewPending && !a.dredging {
+			return a, a.startDredge()
+		}
+		return a, nil
 
 	case dredgeStartInternal:
 		a.dredging = true
@@ -193,6 +325,8 @@ func (a *App) updateListItem(result dredge.Result) {
 			if result.Err == nil {
 				li.link.Title = result.Title
 				li.link.Description = result.Description
+				li.link.Summary = result.Summary
+				li.link.Tags = result.Tags
 			}
 			a.list.SetItem(i, li)
 			return
@@ -201,22 +335,35 @@ func (a *App) updateListItem(result dredge.Result) {
 }
 
 func (a App) View() tea.View {
-	var enrichmentBar string
-	if a.dredging {
-		bar := a.progress.ViewAs(float64(a.dredgeDone) / max(float64(a.dredgeTotal), 1))
-		enrichmentBar = enrichmentBarStyle.Width(a.width).Render(
-			a.spinner.View()+fmt.Sprintf(" Dredging... %d/%d  ", a.dredgeDone, a.dredgeTotal)+bar,
-		) + "\n"
+	var content string
+
+	if a.mode == modeFocus {
+		content = a.focus.View()
+	} else {
+		var enrichmentBar string
+		if a.dredging {
+			bar := a.progress.ViewAs(float64(a.dredgeDone) / max(float64(a.dredgeTotal), 1))
+			enrichmentBar = enrichmentBarStyle.Width(a.width).Render(
+				a.spinner.View()+fmt.Sprintf(" Dredging... %d/%d  ", a.dredgeDone, a.dredgeTotal)+bar,
+			) + "\n"
+		}
+
+		viewLabel := "pending"
+		if a.listView == viewSaved {
+			viewLabel = "saved"
+		}
+
+		statusBar := statusBarStyle.Width(a.width).Render(
+			statusTextStyle.Render("q") + " quit  " +
+				statusTextStyle.Render("f") + " focus  " +
+				statusTextStyle.Render("b") + " " + viewLabel + "  " +
+				statusTextStyle.Render("r") + " dredge  " +
+				statusTextStyle.Render("/") + " filter  " +
+				statusTextStyle.Render("↑↓") + " navigate",
+		)
+
+		content = docStyle.Render(a.list.View()) + "\n" + enrichmentBar + statusBar
 	}
-
-	statusBar := statusBarStyle.Width(a.width).Render(
-		statusTextStyle.Render("q") + " quit  " +
-			statusTextStyle.Render("r") + " dredge  " +
-			statusTextStyle.Render("/") + " filter  " +
-			statusTextStyle.Render("↑↓") + " navigate",
-	)
-
-	content := docStyle.Render(a.list.View()) + "\n" + enrichmentBar + statusBar
 
 	v := tea.NewView(content)
 	v.AltScreen = true

@@ -31,7 +31,8 @@ func BulkInsert(db *sql.DB, urls []string) (inserted, skipped int, err error) {
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.Prepare(`INSERT OR IGNORE INTO links (url) VALUES (?)`)
+	stmt, err := tx.Prepare(`INSERT INTO links (url) VALUES (?)
+		ON CONFLICT(url) DO UPDATE SET date_added = CURRENT_TIMESTAMP`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("prepare insert: %w", err)
 	}
