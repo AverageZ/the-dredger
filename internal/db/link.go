@@ -197,15 +197,6 @@ func GetNextSavedExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
 	return &l, nil
 }
 
-func SnoozeLink(db *sql.DB, id int64, until time.Time) error {
-	_, err := db.Exec(`UPDATE links SET date_added = ? WHERE id = ?`,
-		until.Format("2006-01-02 15:04:05"), id)
-	if err != nil {
-		return fmt.Errorf("snooze link: %w", err)
-	}
-	return nil
-}
-
 func ResetLinkStatus(db *sql.DB, id int64, originalDateAdded time.Time) error {
 	_, err := db.Exec(`UPDATE links SET status = 0, date_added = ? WHERE id = ?`,
 		originalDateAdded.Format("2006-01-02 15:04:05"), id)

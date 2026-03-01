@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -46,7 +45,7 @@ type FocusModel struct {
 
 	width, height int
 
-	kept, pruned, snoozed int
+	kept, pruned int
 
 	startLink *model.Link
 }
@@ -257,21 +256,6 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		f.anim.start(80, keepColor)
 		return f, animTick()
 
-	case "s":
-		if f.current == nil || f.context == focusSaved {
-			return f, nil
-		}
-		f.browseHistory = nil
-		f.undoStack = append(f.undoStack, UndoFrame{
-			Link:   *f.current,
-			Action: "snoozed",
-		})
-		snoozeUntil := time.Now().Add(7 * 24 * time.Hour)
-		_ = db.SnoozeLink(f.db, f.current.ID, snoozeUntil)
-		f.snoozed++
-		f.anim.start(80, snoozeColor)
-		return f, animTick()
-
 	case "t":
 		if f.current == nil {
 			return f, nil
@@ -329,8 +313,6 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			f.kept--
 		case "pruned":
 			f.pruned--
-		case "snoozed":
-			f.snoozed--
 		}
 
 		f.anim.active = false
@@ -369,7 +351,6 @@ func (f FocusModel) View() string {
 		help = lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
 			statusTextStyle.Render("h") + " prune  " +
 				statusTextStyle.Render("l") + " keep  " +
-				statusTextStyle.Render("s") + " snooze  " +
 				statusTextStyle.Render("t") + " tag  " +
 				statusTextStyle.Render("↑↓") + " navigate  " +
 				statusTextStyle.Render("z") + " undo  " +
@@ -379,7 +360,7 @@ func (f FocusModel) View() string {
 
 	// Stats line
 	stats := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
-		fmt.Sprintf("Kept: %d | Pruned: %d | Snoozed: %d", f.kept, f.pruned, f.snoozed),
+		fmt.Sprintf("Kept: %d | Pruned: %d", f.kept, f.pruned),
 	)
 
 	// Undo toast — show while stack is non-empty
@@ -540,7 +521,7 @@ func (f FocusModel) viewCompletion() string {
 			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press Esc to return")
 	} else {
 		message = "All caught up!\n\n" +
-			fmt.Sprintf("Kept: %d | Pruned: %d | Snoozed: %d\n\n", f.kept, f.pruned, f.snoozed) +
+			fmt.Sprintf("Kept: %d | Pruned: %d\n\n", f.kept, f.pruned) +
 			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press [b] to view saved bookmarks  |  Esc to return")
 	}
 
