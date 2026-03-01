@@ -38,7 +38,8 @@ type FocusModel struct {
 
 	anim AnimState
 
-	undoStack []UndoFrame
+	undoStack     []UndoFrame
+	browseHistory []model.Link
 
 	tagging  bool
 	tagInput textinput.Model
@@ -191,10 +192,34 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case "down", "n":
+		if f.current == nil || f.next == nil {
+			return f, nil
+		}
+		f.browseHistory = append(f.browseHistory, *f.current)
+		f.current = f.next
+		f.next = nil
+		f.descScroll = 0
+		return f, f.prefetchNextLink
+
+	case "up", "p":
+		if len(f.browseHistory) == 0 {
+			return f, nil
+		}
+		// Pop from browse history
+		prev := f.browseHistory[len(f.browseHistory)-1]
+		f.browseHistory = f.browseHistory[:len(f.browseHistory)-1]
+		// Push current back as next
+		f.next = f.current
+		f.current = &prev
+		f.descScroll = 0
+		return f, nil
+
 	case "h":
 		if f.current == nil {
 			return f, nil
 		}
+		f.browseHistory = nil
 		if f.context == focusSaved {
 			// Saved context: [h] moves to pending (unprocessed)
 			f.undoStack = append(f.undoStack, UndoFrame{
@@ -221,6 +246,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		if f.current == nil || f.context == focusSaved {
 			return f, nil
 		}
+		f.browseHistory = nil
 		f.undoStack = append(f.undoStack, UndoFrame{
 			Link:   *f.current,
 			Action: "kept",
@@ -235,6 +261,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		if f.current == nil || f.context == focusSaved {
 			return f, nil
 		}
+		f.browseHistory = nil
 		f.undoStack = append(f.undoStack, UndoFrame{
 			Link:   *f.current,
 			Action: "snoozed",
@@ -287,6 +314,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		if len(f.undoStack) == 0 {
 			return f, nil
 		}
+		f.browseHistory = nil
 		// Pop last undo frame
 		frame := f.undoStack[len(f.undoStack)-1]
 		f.undoStack = f.undoStack[:len(f.undoStack)-1]
@@ -333,6 +361,7 @@ func (f FocusModel) View() string {
 				statusTextStyle.Render("t") + " tag  " +
 				statusTextStyle.Render("d") + " dredge  " +
 				statusTextStyle.Render("r") + " read  " +
+				statusTextStyle.Render("↑↓") + " navigate  " +
 				statusTextStyle.Render("z") + " undo  " +
 				statusTextStyle.Render("Esc") + " back",
 		)
@@ -342,6 +371,7 @@ func (f FocusModel) View() string {
 				statusTextStyle.Render("l") + " keep  " +
 				statusTextStyle.Render("s") + " snooze  " +
 				statusTextStyle.Render("t") + " tag  " +
+				statusTextStyle.Render("↑↓") + " navigate  " +
 				statusTextStyle.Render("z") + " undo  " +
 				statusTextStyle.Render("Esc") + " back",
 		)
