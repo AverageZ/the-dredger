@@ -1,0 +1,30 @@
+#!/bin/sh
+# Pre-commit hook: lightweight checks only (no golangci-lint).
+
+set -e
+
+echo "==> Checking formatting..."
+UNFORMATTED=$(gofmt -l . 2>&1 || true)
+if [ -n "$UNFORMATTED" ]; then
+    echo "ERROR: The following files need gofmt:"
+    echo "$UNFORMATTED"
+    echo "Run 'gofmt -w .' to fix."
+    exit 1
+fi
+
+echo "==> Running go vet..."
+go vet ./...
+
+echo "==> Checking go.mod tidiness..."
+cp go.mod go.mod.bak
+cp go.sum go.sum.bak
+go mod tidy
+if ! diff -q go.mod go.mod.bak >/dev/null 2>&1 || ! diff -q go.sum go.sum.bak >/dev/null 2>&1; then
+    mv go.mod.bak go.mod
+    mv go.sum.bak go.sum
+    echo "ERROR: go.mod or go.sum is not tidy. Run 'go mod tidy'."
+    exit 1
+fi
+rm -f go.mod.bak go.sum.bak
+
+echo "==> All pre-commit checks passed."

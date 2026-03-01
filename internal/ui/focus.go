@@ -385,10 +385,7 @@ func (f *FocusModel) renderCard() string {
 		return ""
 	}
 
-	cardWidth := min(60, f.width-20)
-	if cardWidth < 30 {
-		cardWidth = 30
-	}
+	cardWidth := max(30, min(64, f.width-20))
 	innerWidth := cardWidth - 6 // account for border + padding
 
 	// Domain header

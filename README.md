@@ -91,3 +91,33 @@ All data lives in a SQLite database at `~/.dredger/dredger.db`.
 # Delete all links and start fresh (prompts for confirmation)
 ./dredger reset
 ```
+
+## Development
+
+### Setup (one-time)
+
+```bash
+make install-tools   # installs golangci-lint
+make install-hooks   # activates pre-commit hook
+```
+
+### Makefile Targets
+
+| Target       | Description                               |
+| ------------ | ----------------------------------------- |
+| `make`       | Default — runs fmt, lint, test, and build |
+| `make build` | Compile binary to `./dredger`             |
+| `make run`   | Build and run                             |
+| `make test`  | Run all tests                             |
+| `make lint`  | Run golangci-lint                         |
+| `make fmt`   | Format all Go files                       |
+| `make tidy`  | Run `go mod tidy`                         |
+| `make clean` | Remove build artifacts                    |
+
+### Pre-commit Hook
+
+Running `make install-hooks` sets up a Git pre-commit hook that automatically runs `gofmt`, `go vet`, and a `go mod tidy` check on every commit, catching common issues before they reach CI.
+
+### CI
+
+GitHub Actions runs format check, vet, lint, test, and build on every push and PR to `main`.
