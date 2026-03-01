@@ -8,7 +8,19 @@
       "Bash(go build:*)",
       "Bash(go test:*)",
       "Bash(go vet:*)",
-      "Bash(gofmt:*)"
+      "Bash(gofmt:*)",
+      "Skill(ticket-task)",
+      "Skill(ticket-task:*)",
+      "Skill(reflect)",
+      "Skill(reflect:*)",
+      "Skill(triage-issue)",
+      "Skill(triage-issue:*)",
+      "Skill(ticket-task-lite)",
+      "Skill(ticket-task-lite:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go run:*)",
+      "Skill(simplify)",
+      "Skill(simplify:*)"
     ]
   }
 }

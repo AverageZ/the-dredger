@@ -78,11 +78,15 @@ func (f FocusModel) loadNextLink() tea.Msg {
 }
 
 func (f FocusModel) prefetchNextLink() tea.Msg {
+	excludeID := int64(0)
+	if f.current != nil {
+		excludeID = f.current.ID
+	}
 	var link *model.Link
 	if f.context == focusSaved {
-		link, _ = db.GetNextSaved(f.db)
+		link, _ = db.GetNextSavedExcluding(f.db, excludeID)
 	} else {
-		link, _ = db.GetNextUnprocessed(f.db)
+		link, _ = db.GetNextUnprocessedExcluding(f.db, excludeID)
 	}
 	return NextLinkPrefetchedMsg{Link: link}
 }

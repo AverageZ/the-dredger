@@ -158,10 +158,14 @@ func UpdateLinkMeta(db *sql.DB, id int64, title, description string) error {
 }
 
 func GetNextUnprocessed(db *sql.DB) (*model.Link, error) {
+	return GetNextUnprocessedExcluding(db, 0)
+}
+
+func GetNextUnprocessedExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
 	row := db.QueryRow(
-		`SELECT ` + linkSelectCols + `
-		 FROM links WHERE status = 0 AND date_added <= datetime('now')
-		 ORDER BY date_added ASC LIMIT 1`,
+		`SELECT `+linkSelectCols+`
+		 FROM links WHERE status = 0 AND date_added <= datetime('now') AND id != ?
+		 ORDER BY date_added ASC LIMIT 1`, excludeID,
 	)
 	l, err := scanLink(row)
 	if err == sql.ErrNoRows {
@@ -174,10 +178,14 @@ func GetNextUnprocessed(db *sql.DB) (*model.Link, error) {
 }
 
 func GetNextSaved(db *sql.DB) (*model.Link, error) {
+	return GetNextSavedExcluding(db, 0)
+}
+
+func GetNextSavedExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
 	row := db.QueryRow(
-		`SELECT ` + linkSelectCols + `
-		 FROM links WHERE status = 1
-		 ORDER BY date_added DESC LIMIT 1`,
+		`SELECT `+linkSelectCols+`
+		 FROM links WHERE status = 1 AND id != ?
+		 ORDER BY date_added DESC LIMIT 1`, excludeID,
 	)
 	l, err := scanLink(row)
 	if err == sql.ErrNoRows {
