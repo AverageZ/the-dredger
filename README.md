@@ -33,27 +33,47 @@ Feed it a file containing URLs (one per line, or mixed text — URLs are extract
 
 ### List Mode
 
-| Key       | Action                                                     |
-| --------- | ---------------------------------------------------------- |
-| `↑` / `↓` | Navigate links                                             |
-| `f`       | Enter focus mode                                           |
-| `r`       | Dredge — enrich links with titles, metadata, and summaries |
-| `/`       | Filter links                                               |
-| `q`       | Quit                                                       |
+| Key       | Action                         |
+| --------- | ------------------------------ |
+| `↑` / `↓` | Navigate links                 |
+| `f`       | Enter focus mode               |
+| `b`       | Switch to saved bookmarks view |
+| `/`       | Filter links                   |
+| `q`       | Quit                           |
 
-### Focus Mode
+### Focus Mode — Pending Bookmarks
 
-Review links one-by-one, Tinder-style:
+Review pending links one-by-one, Tinder-style:
 
-| Key       | Action                             |
-| --------- | ---------------------------------- |
-| `h`       | Prune (discard)                    |
-| `l`       | Keep (save)                        |
-| `s`       | Snooze (revisit in 7 days)         |
-| `t`       | Tag                                |
-| `j` / `k` | Scroll description                 |
-| `z`       | Undo last action (3-second window) |
-| `esc`     | Back to list                       |
+| Key   | Action                |
+| ----- | --------------------- |
+| `h`   | Prune (soft delete)   |
+| `l`   | Keep (move to saved)  |
+| `s`   | Snooze (stay pending) |
+| `z`   | Undo last action      |
+| `esc` | Back to list          |
+
+### Focus Mode — Saved Bookmarks
+
+Manage saved links with tagging, reading, and enrichment:
+
+| Key   | Action                                        |
+| ----- | --------------------------------------------- |
+| `h`   | Prune (move back to pending)                  |
+| `t`   | Tag                                           |
+| `r`   | Read                                          |
+| `d`   | Dredge (LLM enrich with metadata & summaries) |
+| `z`   | Undo last action                              |
+| `esc` | Back to list                                  |
+
+### Dredging States
+
+When you press `d` on a saved bookmark, dredging progresses through:
+
+1. **Crawling** — the link is being fetched and data gathered
+2. **Crunching** — contents are being summarized by an LLM
+3. **Complete** — done, entry updated with metadata & summary
+4. **Capsized** — failed (error message preserved)
 
 ## Data Storage
 
