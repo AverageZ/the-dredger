@@ -36,7 +36,7 @@ func BulkInsert(db *sql.DB, urls []string) (inserted, skipped int, err error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("prepare insert: %w", err)
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, u := range urls {
 		res, err := stmt.Exec(u)

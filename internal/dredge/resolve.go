@@ -23,6 +23,8 @@ type Resolver interface {
 	Resolve(client *http.Client, rawURL string) (ResolveResult, error)
 }
 
+const tagSpan = "span"
+
 var resolvers = []Resolver{&HNResolver{}}
 
 // ResolveURL runs the URL through registered resolvers. If none match or
@@ -56,7 +58,7 @@ func (h *HNResolver) Resolve(client *http.Client, rawURL string) (ResolveResult,
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("fetch HN page: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
@@ -97,7 +99,7 @@ func extractHNComments(body io.Reader) []string {
 		case html.StartTagToken:
 			tn, hasAttr := z.TagName()
 			tag := string(tn)
-			if tag == "span" && hasAttr {
+			if tag == tagSpan && hasAttr {
 				for {
 					key, val, more := z.TagAttr()
 					if string(key) == "class" && strings.Contains(string(val), "commtext") {
@@ -111,7 +113,7 @@ func extractHNComments(body io.Reader) []string {
 			}
 		case html.EndTagToken:
 			tn, _ := z.TagName()
-			if string(tn) == "span" && inComment {
+			if string(tn) == tagSpan && inComment {
 				text := strings.TrimSpace(buf.String())
 				if text != "" {
 					if len(text) > maxCommentLen {
@@ -147,7 +149,7 @@ func extractHNArticleURL(body io.Reader) (string, bool) {
 			tn, hasAttr := z.TagName()
 			tag := string(tn)
 
-			if tag == "span" && hasAttr {
+			if tag == tagSpan && hasAttr {
 				for {
 					key, val, more := z.TagAttr()
 					if string(key) == "class" && strings.Contains(string(val), "titleline") {
@@ -177,7 +179,7 @@ func extractHNArticleURL(body io.Reader) (string, bool) {
 			}
 		case html.EndTagToken:
 			tn, _ := z.TagName()
-			if string(tn) == "span" && inTitleline {
+			if string(tn) == tagSpan && inTitleline {
 				inTitleline = false
 			}
 		}

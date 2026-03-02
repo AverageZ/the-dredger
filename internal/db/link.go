@@ -65,7 +65,7 @@ func GetLinks(db *sql.DB) ([]model.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query links: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var links []model.Link
 	for rows.Next() {
@@ -83,7 +83,7 @@ func GetLinksByStatus(db *sql.DB, status model.Status) ([]model.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query links by status: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var links []model.Link
 	for rows.Next() {
@@ -136,7 +136,7 @@ func GetUnprocessedLinks(db *sql.DB) ([]model.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query unprocessed links: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var links []model.Link
 	for rows.Next() {
@@ -246,7 +246,7 @@ func CountLinksByStatus(db *sql.DB) (LinkStats, error) {
 	if err != nil {
 		return LinkStats{}, fmt.Errorf("count links by status: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var stats LinkStats
 	for rows.Next() {
@@ -272,7 +272,7 @@ func GetRandomSavedLinks(database *sql.DB, count int) ([]model.Link, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query random saved links: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	seen := make(map[string]bool)
 	var result []model.Link

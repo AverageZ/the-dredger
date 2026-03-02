@@ -26,7 +26,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
 	}
-	defer database.Close()
+	defer func() { _ = database.Close() }()
 
 	if err := db.InitSchema(database); err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing schema: %v\n", err)

@@ -17,6 +17,9 @@ import (
 )
 
 const (
+	keyEsc   = "esc"
+	keyEnter = "enter"
+
 	gridCellMinW  = 28
 	gridCellMaxW  = 40
 	gridCellH     = 6
@@ -247,7 +250,7 @@ func (g GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 func (g GridModel) updateSerendipity(msg tea.Msg) (GridModel, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
 		switch msg.String() {
-		case "esc":
+		case keyEsc:
 			g.showSerendipity = false
 			g.serendipityLinks = nil
 		}
@@ -258,13 +261,13 @@ func (g GridModel) updateSerendipity(msg tea.Msg) (GridModel, tea.Cmd) {
 func (g GridModel) updateSearch(msg tea.Msg) (GridModel, tea.Cmd) {
 	if msg, ok := msg.(tea.KeyPressMsg); ok {
 		switch msg.String() {
-		case "esc":
+		case keyEsc:
 			g.searching = false
 			g.searchQuery = ""
 			g.filtered = nil
 			g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
 			return g, nil
-		case "enter":
+		case keyEnter:
 			g.searching = false
 			return g, nil
 		case "backspace":
@@ -325,7 +328,7 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 			g.searching = true
 			g.searchQuery = ""
 			return g, nil
-		case "enter":
+		case keyEnter:
 			if link := g.selectedLink(); link != nil {
 				_ = exec.Command("open", link.URL).Start()
 			}
@@ -335,7 +338,7 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 			}
 		case "r":
 			return g, g.loadSerendipity
-		case "esc":
+		case keyEsc:
 			return g, func() tea.Msg { return GridExitMsg{} }
 		}
 	}

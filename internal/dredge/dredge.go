@@ -133,7 +133,7 @@ func (s *Service) fetchOne(ctx context.Context, id int64, rawURL string) Result 
 	if err != nil {
 		return Result{LinkID: id, Err: fmt.Errorf("fetch %s: %w", scrapeURL, err)}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	limited := io.LimitReader(resp.Body, 1<<20) // 1MB
 	meta := ScrapeMetadata(limited)

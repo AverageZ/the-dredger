@@ -15,6 +15,8 @@ import (
 	"github.com/alexzajac/the-dredger/internal/model"
 )
 
+const keyCtrlC = "ctrl+c"
+
 var docStyle = lipgloss.NewStyle().Margin(1, 2)
 
 type appMode int
@@ -199,7 +201,7 @@ func (a App) updateFocus(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q", keyCtrlC:
 			if a.dredgeCancel != nil {
 				a.dredgeCancel()
 			}
@@ -225,7 +227,7 @@ func (a App) updateGrid(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if !a.grid.searching && !a.grid.showSerendipity {
 			switch msg.String() {
-			case "q", "ctrl+c":
+			case "q", keyCtrlC:
 				if a.dredgeCancel != nil {
 					a.dredgeCancel()
 				}
@@ -250,7 +252,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break // let list handle filter input
 		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q", keyCtrlC:
 			if a.dredgeCancel != nil {
 				a.dredgeCancel()
 			}
@@ -375,11 +377,12 @@ func (a *App) updateListItem(result dredge.Result) {
 func (a App) View() tea.View {
 	var content string
 
-	if a.mode == modeFocus {
+	switch a.mode {
+	case modeFocus:
 		content = a.focus.View()
-	} else if a.mode == modeGrid {
+	case modeGrid:
 		content = a.grid.View()
-	} else {
+	default:
 		var enrichmentBar string
 		if a.dredging {
 			bar := a.progress.ViewAs(float64(a.dredgeDone) / max(float64(a.dredgeTotal), 1))
