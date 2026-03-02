@@ -81,8 +81,9 @@ type GridModel struct {
 	searching   bool
 	searchQuery string
 
-	serendipityLinks []model.Link
-	showSerendipity  bool
+	serendipityLinks  []model.Link
+	showSerendipity   bool
+	serendipityScroll int
 
 	width  int
 	height int
@@ -234,6 +235,7 @@ func (g GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 		if msg.Err == nil && len(msg.Links) > 0 {
 			g.serendipityLinks = msg.Links
 			g.showSerendipity = true
+			g.serendipityScroll = 0
 		}
 		return g, nil
 	}
@@ -253,6 +255,13 @@ func (g GridModel) updateSerendipity(msg tea.Msg) (GridModel, tea.Cmd) {
 		case keyEsc:
 			g.showSerendipity = false
 			g.serendipityLinks = nil
+		case "j", "down":
+			g.serendipityScroll++
+		case "k", "up":
+			g.serendipityScroll--
+			if g.serendipityScroll < 0 {
+				g.serendipityScroll = 0
+			}
 		}
 	}
 	return g, nil
@@ -598,11 +607,42 @@ func (g GridModel) viewSerendipity() string {
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Center, cards...)
-	overlay := serendipityOverlayStyle.Render(
-		lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFB347")).Render("✦ Serendipity Shuffle") + "\n\n" +
-			content + "\n\n" +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press Esc to dismiss"),
-	)
+
+	titleLine := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFB347")).Render("✦ Serendipity Shuffle")
+	footerLine := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("j/k scroll · Esc dismiss")
+
+	fullContent := titleLine + "\n\n" + content + "\n\n" + footerLine
+
+	// Apply scroll if content exceeds available height.
+	// Account for overlay border (2) + padding (2) + placement chrome (2).
+	availH := g.height - 6
+	if availH < 4 {
+		availH = 4
+	}
+
+	lines := strings.Split(fullContent, "\n")
+	if len(lines) > availH {
+		maxScroll := len(lines) - availH
+		if g.serendipityScroll > maxScroll {
+			g.serendipityScroll = maxScroll
+		}
+
+		visible := lines[g.serendipityScroll : g.serendipityScroll+availH]
+
+		var indicators []string
+		if g.serendipityScroll > 0 {
+			indicators = append(indicators, "↑")
+		}
+		if g.serendipityScroll < maxScroll {
+			indicators = append(indicators, "↓")
+		}
+		scrollHint := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(strings.Join(indicators, " "))
+
+		visible = append(visible, scrollHint)
+		fullContent = strings.Join(visible, "\n")
+	}
+
+	overlay := serendipityOverlayStyle.Render(fullContent)
 
 	return lipgloss.Place(g.width, g.height, lipgloss.Center, lipgloss.Center, overlay)
 }
