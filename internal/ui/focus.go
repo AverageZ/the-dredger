@@ -3,6 +3,7 @@ package ui
 import (
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os/exec"
 	"strings"
@@ -28,6 +29,7 @@ type UndoFrame struct {
 
 type FocusModel struct {
 	db      *sql.DB
+	logger  *slog.Logger
 	current *model.Link
 	next    *model.Link
 	context FocusContext
@@ -50,13 +52,14 @@ type FocusModel struct {
 	startLink *model.Link
 }
 
-func NewFocusModel(database *sql.DB, width, height int, ctx FocusContext, startLink *model.Link) FocusModel {
+func NewFocusModel(database *sql.DB, logger *slog.Logger, width, height int, ctx FocusContext, startLink *model.Link) FocusModel {
 	ti := textinput.New()
 	ti.Placeholder = "add tag..."
 	ti.CharLimit = 40
 
 	return FocusModel{
 		db:        database,
+		logger:    logger,
 		anim:      newAnimState(),
 		tagInput:  ti,
 		width:     width,
@@ -83,10 +86,14 @@ func (f FocusModel) prefetchNextLink() tea.Msg {
 		excludeID = f.current.ID
 	}
 	var link *model.Link
+	var err error
 	if f.context == focusSaved {
-		link, _ = db.GetNextSavedExcluding(f.db, excludeID)
+		link, err = db.GetNextSavedExcluding(f.db, excludeID)
 	} else {
-		link, _ = db.GetNextUnprocessedExcluding(f.db, excludeID)
+		link, err = db.GetNextUnprocessedExcluding(f.db, excludeID)
+	}
+	if err != nil {
+		f.logger.Error("failed to prefetch next link", "exclude_id", excludeID, "err", err)
 	}
 	return NextLinkPrefetchedMsg{Link: link}
 }
@@ -169,7 +176,9 @@ func (f FocusModel) updateTagging(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		tag := strings.TrimSpace(f.tagInput.Value())
 		if tag != "" && f.current != nil {
 			f.current.Tags = append(f.current.Tags, tag)
-			_ = db.UpdateLink(f.db, *f.current)
+			if err := db.UpdateLink(f.db, *f.current); err != nil {
+				f.logger.Error("failed to save tag", "link_id", f.current.ID, "err", err)
+			}
 		}
 		f.tagging = false
 		f.tagInput.Reset()
@@ -226,7 +235,9 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 				Action: "moved to pending",
 			})
 			f.current.Status = model.Unprocessed
-			_ = db.UpdateLink(f.db, *f.current)
+			if err := db.UpdateLink(f.db, *f.current); err != nil {
+				f.logger.Error("failed to move link to pending", "link_id", f.current.ID, "err", err)
+			}
 			f.anim.start(-80, snoozeColor)
 			return f, animTick()
 		}
@@ -236,7 +247,9 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			Action: "pruned",
 		})
 		f.current.Status = model.Pruned
-		_ = db.UpdateLink(f.db, *f.current)
+		if err := db.UpdateLink(f.db, *f.current); err != nil {
+			f.logger.Error("failed to prune link", "link_id", f.current.ID, "err", err)
+		}
 		f.pruned++
 		f.anim.start(-80, pruneColor)
 		return f, animTick()
@@ -251,7 +264,9 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			Action: "kept",
 		})
 		f.current.Status = model.Saved
-		_ = db.UpdateLink(f.db, *f.current)
+		if err := db.UpdateLink(f.db, *f.current); err != nil {
+			f.logger.Error("failed to save link", "link_id", f.current.ID, "err", err)
+		}
 		f.kept++
 		f.anim.start(80, keepColor)
 		return f, animTick()
@@ -304,7 +319,9 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		f.undoStack = f.undoStack[:len(f.undoStack)-1]
 
 		// Restore the link to its previous state
-		_ = db.RestoreLink(f.db, frame.Link)
+		if err := db.RestoreLink(f.db, frame.Link); err != nil {
+			f.logger.Error("failed to restore link", "link_id", frame.Link.ID, "err", err)
+		}
 		restored := frame.Link
 		f.current = &restored
 

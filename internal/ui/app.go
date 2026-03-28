@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/progress"
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/alexzajac/the-dredger/internal/config"
 	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/dredge"
 	"github.com/alexzajac/the-dredger/internal/model"
@@ -36,6 +39,8 @@ const (
 
 type App struct {
 	db     *sql.DB
+	cfg    config.Config
+	logger *slog.Logger
 	list   list.Model
 	width  int
 	height int
@@ -54,11 +59,15 @@ type App struct {
 	resultsCh    <-chan dredge.Result
 }
 
-func NewApp(database *sql.DB) App {
+func NewApp(database *sql.DB, cfg config.Config, logger *slog.Logger) App {
 	delegate := list.NewDefaultDelegate()
 	l := list.New([]list.Item{}, delegate, 0, 0)
 	l.Title = "The Dredger — Pending"
 	l.Styles.Title = titleStyle
+	l.SetShowHelp(false)
+	l.SetShowStatusBar(false)
+	l.SetShowFilter(false)
+	l.SetFilteringEnabled(false)
 
 	s := spinner.New()
 	s.Spinner = spinner.Dot
@@ -68,11 +77,27 @@ func NewApp(database *sql.DB) App {
 
 	return App{
 		db:       database,
+		cfg:      cfg,
+		logger:   logger,
 		list:     l,
 		spinner:  s,
 		progress: p,
 		listView: viewPending,
 	}
+}
+
+func (a *App) recalcListHeight() {
+	if a.height == 0 {
+		return
+	}
+	h := a.height - 5 // base: title + margins + status bar
+	if a.dredging {
+		h--
+	}
+	if a.list.FilterState() == list.Filtering || a.list.FilterState() == list.FilterApplied {
+		h--
+	}
+	a.list.SetSize(a.width-4, h)
 }
 
 func (a App) Init() tea.Cmd {
@@ -101,7 +126,7 @@ func (a App) startDredge() tea.Cmd {
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		svc := dredge.NewService(a.db, 4)
+		svc := dredge.NewService(a.db, a.cfg.Workers, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
 		go svc.Run(ctx, unprocessed)
 
 		return dredgeStartInternal{
@@ -131,9 +156,11 @@ func waitForResult(ch <-chan dredge.Result) tea.Cmd {
 func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 	return func() tea.Msg {
 		// Set state to crawling
-		_ = db.UpdateDredgeState(a.db, linkID, model.DredgeCrawling, "")
+		if err := db.UpdateDredgeState(a.db, linkID, model.DredgeCrawling, ""); err != nil {
+			a.logger.Error("failed to set crawling state", "link_id", linkID, "err", err)
+		}
 
-		svc := dredge.NewService(a.db, 1)
+		svc := dredge.NewService(a.db, 1, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
 		link := model.Link{ID: linkID, URL: url}
 		ctx := context.Background()
 
@@ -165,11 +192,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
-		listHeight := msg.Height - 4
-		if a.dredging {
-			listHeight -= 1
-		}
-		a.list.SetSize(msg.Width-4, listHeight)
+		a.recalcListHeight()
 		a.focus.width = msg.Width
 		a.focus.height = msg.Height
 		a.grid.width = msg.Width
@@ -268,7 +291,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				link := sel.link
 				startLink = &link
 			}
-			a.focus = NewFocusModel(a.db, a.width, a.height, ctx, startLink)
+			a.focus = NewFocusModel(a.db, a.logger, a.width, a.height, ctx, startLink)
 			return a, a.focus.Init()
 		case "b":
 			if a.listView == viewPending {
@@ -291,10 +314,13 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "/":
 			a.list.SetFilteringEnabled(true)
+			a.list.SetShowFilter(false)
+			a.recalcListHeight()
 		}
 
 	case LinksLoadedMsg:
 		if msg.Err != nil {
+			a.logger.Error("failed to load links", "err", msg.Err)
 			return a, nil
 		}
 		items := make([]list.Item, len(msg.Links))
@@ -313,9 +339,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.dredgeDone = 0
 		a.dredgeCancel = msg.cancel
 		a.resultsCh = msg.results
-		if a.height > 0 {
-			a.list.SetSize(a.width-4, a.height-5)
-		}
+		a.recalcListHeight()
 		return a, tea.Batch(a.spinner.Tick, waitForResult(a.resultsCh))
 
 	case DredgeResultMsg:
@@ -330,9 +354,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case DredgeDoneMsg:
 		a.dredging = false
-		if a.height > 0 {
-			a.list.SetSize(a.width-4, a.height-4)
-		}
+		a.recalcListHeight()
 		return a, nil
 
 	case spinner.TickMsg:
@@ -349,8 +371,12 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 
+	prevFilterState := a.list.FilterState()
 	var cmd tea.Cmd
 	a.list, cmd = a.list.Update(msg)
+	if a.list.FilterState() != prevFilterState {
+		a.recalcListHeight()
+	}
 	return a, cmd
 }
 
@@ -387,8 +413,8 @@ func (a App) View() tea.View {
 		if a.dredging {
 			bar := a.progress.ViewAs(float64(a.dredgeDone) / max(float64(a.dredgeTotal), 1))
 			enrichmentBar = enrichmentBarStyle.Width(a.width).Render(
-				a.spinner.View()+fmt.Sprintf(" Dredging... %d/%d  ", a.dredgeDone, a.dredgeTotal)+bar,
-			) + "\n"
+				a.spinner.View() + fmt.Sprintf(" Dredging... %d/%d  ", a.dredgeDone, a.dredgeTotal) + bar,
+			)
 		}
 
 		viewLabel := "pending"
@@ -411,7 +437,44 @@ func (a App) View() tea.View {
 				statusTextStyle.Render("↑↓") + " navigate",
 		)
 
-		content = docStyle.Render(a.list.View()) + "\n" + enrichmentBar + statusBar
+		listContent := docStyle.Render(a.list.View())
+
+		// Build bottom chrome
+		var bottomParts []string
+
+		// Filter bar (reuse gridSearchStyle for consistency)
+		if a.list.FilterState() == list.Filtering {
+			filterBar := gridSearchStyle.Width(a.width).Render("/ " + a.list.FilterValue() + "█")
+			bottomParts = append(bottomParts, filterBar)
+		} else if a.list.FilterState() == list.FilterApplied {
+			filterBar := gridSearchStyle.Width(a.width).Render(
+				fmt.Sprintf("Filter: \"%s\" (%d results)", a.list.FilterValue(), len(a.list.VisibleItems())),
+			)
+			bottomParts = append(bottomParts, filterBar)
+		}
+
+		if enrichmentBar != "" {
+			bottomParts = append(bottomParts, enrichmentBar)
+		}
+		bottomParts = append(bottomParts, statusBar)
+		bottomChrome := lipgloss.JoinVertical(lipgloss.Left, bottomParts...)
+
+		// Pin bottom chrome: allocate remaining height to list area
+		bottomH := lipgloss.Height(bottomChrome)
+		availH := a.height - bottomH
+		if availH < 0 {
+			availH = 0
+		}
+		listContent = strings.TrimRight(listContent, "\n")
+		lines := strings.Split(listContent, "\n")
+		if len(lines) > availH {
+			lines = lines[:availH]
+		}
+		filler := strings.Repeat(" ", a.width)
+		for len(lines) < availH {
+			lines = append(lines, filler)
+		}
+		content = strings.Join(lines, "\n") + "\n" + bottomChrome
 	}
 
 	v := tea.NewView(content)

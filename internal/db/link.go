@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -303,6 +304,53 @@ func DeletePrunedLinks(db *sql.DB) (int64, error) {
 		return 0, fmt.Errorf("delete pruned links: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// TagCount holds a tag name and how many saved links use it.
+type TagCount struct {
+	Tag   string
+	Count int
+}
+
+// GetTagCounts returns all tags from saved links with their counts, sorted by count desc then alphabetically.
+func GetTagCounts(database *sql.DB) ([]TagCount, error) {
+	rows, err := database.Query(`SELECT tags FROM links WHERE status = ?`, int(model.Saved))
+	if err != nil {
+		return nil, fmt.Errorf("query tag counts: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var tags string
+		if err := rows.Scan(&tags); err != nil {
+			return nil, fmt.Errorf("scan tags: %w", err)
+		}
+		if tags == "" {
+			continue
+		}
+		for _, t := range strings.Split(tags, ",") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				counts[t]++
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]TagCount, 0, len(counts))
+	for tag, count := range counts {
+		result = append(result, TagCount{Tag: tag, Count: count})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Count != result[j].Count {
+			return result[i].Count > result[j].Count
+		}
+		return result[i].Tag < result[j].Tag
+	})
+	return result, nil
 }
 
 func DeleteAllLinks(db *sql.DB) (int64, error) {

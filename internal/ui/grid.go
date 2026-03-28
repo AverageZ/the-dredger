@@ -85,6 +85,15 @@ type GridModel struct {
 	showSerendipity   bool
 	serendipityScroll int
 
+	// Collections overlay
+	showCollections  bool
+	collections      []db.TagCount
+	collectionCursor int
+	collectionScroll int
+
+	// Collection drill-in
+	activeCollection string
+
 	width  int
 	height int
 }
@@ -147,7 +156,7 @@ func (g *GridModel) recalcLayout() {
 }
 
 func (g *GridModel) activeLinks() []model.Link {
-	if g.searching && g.searchQuery != "" {
+	if (g.searching && g.searchQuery != "") || g.activeCollection != "" {
 		return g.filtered
 	}
 	return g.links
@@ -238,8 +247,20 @@ func (g GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 			g.serendipityScroll = 0
 		}
 		return g, nil
+
+	case TagCountsLoadedMsg:
+		if msg.Err == nil && len(msg.Tags) > 0 {
+			g.collections = msg.Tags
+			g.showCollections = true
+			g.collectionCursor = 0
+			g.collectionScroll = 0
+		}
+		return g, nil
 	}
 
+	if g.showCollections {
+		return g.updateCollections(msg)
+	}
 	if g.showSerendipity {
 		return g.updateSerendipity(msg)
 	}
@@ -265,6 +286,112 @@ func (g GridModel) updateSerendipity(msg tea.Msg) (GridModel, tea.Cmd) {
 		}
 	}
 	return g, nil
+}
+
+func (g GridModel) loadCollections() tea.Msg {
+	tags, err := db.GetTagCounts(g.db)
+	return TagCountsLoadedMsg{Tags: tags, Err: err}
+}
+
+func (g *GridModel) applyCollectionFilter() {
+	if g.activeCollection == "" {
+		g.filtered = nil
+		return
+	}
+	g.filtered = nil
+	for _, l := range g.links {
+		for _, t := range l.Tags {
+			if t == g.activeCollection {
+				g.filtered = append(g.filtered, l)
+				break
+			}
+		}
+	}
+	g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
+}
+
+func (g GridModel) updateCollections(msg tea.Msg) (GridModel, tea.Cmd) {
+	if msg, ok := msg.(tea.KeyPressMsg); ok {
+		switch msg.String() {
+		case keyEsc:
+			g.showCollections = false
+			g.collections = nil
+		case "j", "down":
+			if g.collectionCursor < len(g.collections)-1 {
+				g.collectionCursor++
+				// scroll if cursor goes below visible area
+				visibleRows := g.height - 10 // approximate visible rows in overlay
+				if visibleRows < 4 {
+					visibleRows = 4
+				}
+				if g.collectionCursor >= g.collectionScroll+visibleRows {
+					g.collectionScroll = g.collectionCursor - visibleRows + 1
+				}
+			}
+		case "k", "up":
+			if g.collectionCursor > 0 {
+				g.collectionCursor--
+				if g.collectionCursor < g.collectionScroll {
+					g.collectionScroll = g.collectionCursor
+				}
+			}
+		case keyEnter:
+			if g.collectionCursor < len(g.collections) {
+				g.activeCollection = g.collections[g.collectionCursor].Tag
+				g.showCollections = false
+				g.collections = nil
+				g.applyCollectionFilter()
+			}
+		}
+	}
+	return g, nil
+}
+
+func (g GridModel) viewCollections() string {
+	titleLine := lipgloss.NewStyle().Bold(true).Foreground(activeColor).Render("◆ Collections")
+
+	var rows []string
+	visibleRows := g.height - 10
+	if visibleRows < 4 {
+		visibleRows = 4
+	}
+
+	endIdx := g.collectionScroll + visibleRows
+	if endIdx > len(g.collections) {
+		endIdx = len(g.collections)
+	}
+
+	for i := g.collectionScroll; i < endIdx; i++ {
+		tc := g.collections[i]
+		dot := lipgloss.NewStyle().Foreground(tagColorForString(tc.Tag)).Render("●")
+		name := tc.Tag
+		count := fmt.Sprintf("(%d)", tc.Count)
+
+		line := fmt.Sprintf("  %s %s %s", dot, name, lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(count))
+		if i == g.collectionCursor {
+			line = lipgloss.NewStyle().Background(lipgloss.Color("#4A3D6B")).Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	var scrollHints []string
+	if g.collectionScroll > 0 {
+		scrollHints = append(scrollHints, "↑")
+	}
+	if endIdx < len(g.collections) {
+		scrollHints = append(scrollHints, "↓")
+	}
+
+	footerParts := []string{"j/k navigate · Enter select · Esc dismiss"}
+	if len(scrollHints) > 0 {
+		footerParts = append(footerParts, strings.Join(scrollHints, " "))
+	}
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(strings.Join(footerParts, "  "))
+
+	content := titleLine + "\n\n" + strings.Join(rows, "\n") + "\n\n" + footer
+	overlay := serendipityOverlayStyle.Render(content)
+
+	return lipgloss.Place(g.width, g.height, lipgloss.Center, lipgloss.Center, overlay)
 }
 
 func (g GridModel) updateSearch(msg tea.Msg) (GridModel, tea.Cmd) {
@@ -347,7 +474,15 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 			}
 		case "r":
 			return g, g.loadSerendipity
+		case "c":
+			return g, g.loadCollections
 		case keyEsc:
+			if g.activeCollection != "" {
+				g.activeCollection = ""
+				g.filtered = nil
+				g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
+				return g, nil
+			}
 			return g, func() tea.Msg { return GridExitMsg{} }
 		}
 	}
@@ -355,6 +490,9 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 }
 
 func (g GridModel) View() string {
+	if g.showCollections {
+		return g.viewCollections()
+	}
 	if g.showSerendipity {
 		return g.viewSerendipity()
 	}
@@ -398,13 +536,17 @@ func (g GridModel) View() string {
 		content = grid
 	}
 
-	// Search bar
+	// Search / collection banner
 	var searchBar string
 	if g.searching {
 		searchBar = gridSearchStyle.Width(g.width).Render("/ " + g.searchQuery + "█")
 	} else if g.searchQuery != "" {
 		searchBar = gridSearchStyle.Width(g.width).Render(
 			fmt.Sprintf("Filter: \"%s\" (%d results)", g.searchQuery, len(g.filtered)),
+		)
+	} else if g.activeCollection != "" {
+		searchBar = gridSearchStyle.Width(g.width).Render(
+			fmt.Sprintf("Collection: %s (%d links) · Esc to return", g.activeCollection, len(g.filtered)),
 		)
 	}
 
@@ -414,6 +556,7 @@ func (g GridModel) View() string {
 			statusTextStyle.Render("enter") + " open  " +
 			statusTextStyle.Render("y") + " copy  " +
 			statusTextStyle.Render("/") + " search  " +
+			statusTextStyle.Render("c") + " collections  " +
 			statusTextStyle.Render("r") + " serendipity  " +
 			statusTextStyle.Render("Esc") + " back",
 	)
@@ -647,19 +790,22 @@ func (g GridModel) viewSerendipity() string {
 	return lipgloss.Place(g.width, g.height, lipgloss.Center, lipgloss.Center, overlay)
 }
 
+func tagColorForString(tag string) color.Color {
+	h := fnv.New32a()
+	h.Write([]byte(tag))
+	idx := int(h.Sum32()) % len(tagColors)
+	return tagColors[idx]
+}
+
 func tagColorFromLink(link model.Link) color.Color {
 	tag := ""
 	if len(link.Tags) > 0 {
 		tag = link.Tags[0]
 	}
 	if tag == "" {
-		// Use URL domain as fallback
 		if u, err := url.Parse(link.URL); err == nil {
 			tag = u.Host
 		}
 	}
-	h := fnv.New32a()
-	h.Write([]byte(tag))
-	idx := int(h.Sum32()) % len(tagColors)
-	return tagColors[idx]
+	return tagColorForString(tag)
 }

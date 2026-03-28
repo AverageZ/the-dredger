@@ -4,24 +4,30 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/alexzajac/the-dredger/internal/config"
 	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/ingest"
+	"github.com/alexzajac/the-dredger/internal/logging"
 	"github.com/alexzajac/the-dredger/internal/ui"
 )
 
 func main() {
-	home, err := os.UserHomeDir()
+	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error finding home directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
 
-	dbPath := filepath.Join(home, ".dredger", "dredger.db")
+	logger, closeLog, err := logging.Setup(cfg.LogPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error setting up logging: %v\n", err)
+		os.Exit(1)
+	}
+	defer closeLog()
 
-	database, err := db.Open(dbPath)
+	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
@@ -54,7 +60,7 @@ func main() {
 		}
 	}
 
-	app := ui.NewApp(database)
+	app := ui.NewApp(database, cfg, logger)
 	p := tea.NewProgram(app)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)

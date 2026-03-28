@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
 	"sync"
@@ -30,17 +31,19 @@ type Service struct {
 	ollama  *OllamaClient
 	workers int
 	results chan Result
+	logger  *slog.Logger
 }
 
-func NewService(database *sql.DB, workers int) *Service {
+func NewService(database *sql.DB, workers int, ollamaURL, ollamaModel string, logger *slog.Logger) *Service {
 	return &Service{
 		db: database,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		ollama:  NewOllamaClient("", ""),
+		ollama:  NewOllamaClient(ollamaURL, ollamaModel),
 		workers: workers,
 		results: make(chan Result, workers*2),
+		logger:  logger,
 	}
 }
 
@@ -78,30 +81,44 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 				}
 
 				// Set state to crawling
-				_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCrawling, "")
+				if err := db.UpdateDredgeState(s.db, j.id, model.DredgeCrawling, ""); err != nil {
+					s.logger.Error("failed to set crawling state", "link_id", j.id, "err", err)
+				}
 
 				delay := time.Duration(200+rand.IntN(600)) * time.Millisecond
 				time.Sleep(delay)
 
 				result := s.fetchOne(ctx, j.id, j.url)
 				if result.Err != nil {
-					_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, fmt.Sprintf("crawl: %s", result.Err.Error()))
+					if err := db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, fmt.Sprintf("crawl: %s", result.Err.Error())); err != nil {
+						s.logger.Error("failed to set capsized state", "link_id", j.id, "err", err)
+					}
 				} else if !ollamaAvailable {
 					// Ollama not running — save crawl data, skip crunch
-					_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
+					if err := db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil); err != nil {
+						s.logger.Error("failed to save crawl result", "link_id", j.id, "err", err)
+					}
 				} else {
 					// Crunching phase: LLM summarization
-					_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, "")
+					if err := db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, ""); err != nil {
+						s.logger.Error("failed to set crunching state", "link_id", j.id, "err", err)
+					}
 					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url, result.Comments)
 					if err != nil {
 						// Crawl succeeded but crunch failed — still save crawl data
-						_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil)
-						_ = db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, err.Error())
+						if dbErr := db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil); dbErr != nil {
+							s.logger.Error("failed to save crawl result after crunch failure", "link_id", j.id, "err", dbErr)
+						}
+						if dbErr := db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, err.Error()); dbErr != nil {
+							s.logger.Error("failed to set capsized state", "link_id", j.id, "err", dbErr)
+						}
 						result.Err = err
 					} else {
 						result.Summary = summary
 						result.Tags = tags
-						_ = db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, summary, tags)
+						if dbErr := db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, summary, tags); dbErr != nil {
+							s.logger.Error("failed to save dredge result", "link_id", j.id, "err", dbErr)
+						}
 					}
 				}
 

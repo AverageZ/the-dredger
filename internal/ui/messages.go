@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/dredge"
 	"github.com/alexzajac/the-dredger/internal/model"
 )
@@ -54,6 +55,12 @@ type GridExitMsg struct{}
 type SerendipityResultMsg struct {
 	Links []model.Link
 	Err   error
+}
+
+// TagCountsLoadedMsg carries the result of loading tag counts for collections.
+type TagCountsLoadedMsg struct {
+	Tags []db.TagCount
+	Err  error
 }
 
 // DredgeLinkResultMsg returns the result of a single-link dredge.
