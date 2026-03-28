@@ -57,6 +57,13 @@ type App struct {
 	dredgeDone   int
 	dredgeCancel context.CancelFunc
 	resultsCh    <-chan dredge.Result
+
+	// Collections overlay (saved list view)
+	collections      []db.TagCount
+	showCollections  bool
+	collectionCursor int
+	collectionScroll int
+	activeCollection string
 }
 
 func NewApp(database *sql.DB, cfg config.Config, logger *slog.Logger) App {
@@ -102,6 +109,28 @@ func (a *App) recalcListHeight() {
 
 func (a App) Init() tea.Cmd {
 	return a.loadLinks
+}
+
+func (a App) loadCollections() tea.Msg {
+	tags, err := db.GetTagCounts(a.db)
+	return TagCountsLoadedMsg{Tags: tags, Err: err}
+}
+
+func (a App) loadCollectionLinks() tea.Msg {
+	links, err := db.GetLinksByStatus(a.db, model.Saved)
+	if err != nil {
+		return LinksLoadedMsg{Err: err}
+	}
+	var filtered []model.Link
+	for _, l := range links {
+		for _, t := range l.Tags {
+			if t == a.activeCollection {
+				filtered = append(filtered, l)
+				break
+			}
+		}
+	}
+	return LinksLoadedMsg{Links: filtered}
 }
 
 func (a App) loadLinks() tea.Msg {
@@ -271,6 +300,47 @@ func (a App) updateGrid(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		// Handle collections overlay input
+		if a.showCollections {
+			switch msg.String() {
+			case keyEsc:
+				a.showCollections = false
+				a.collections = nil
+			case "j", "down":
+				if a.collectionCursor < len(a.collections)-1 {
+					a.collectionCursor++
+					visibleRows := a.height - 10
+					if visibleRows < 4 {
+						visibleRows = 4
+					}
+					if a.collectionCursor >= a.collectionScroll+visibleRows {
+						a.collectionScroll = a.collectionCursor - visibleRows + 1
+					}
+				}
+			case "k", "up":
+				if a.collectionCursor > 0 {
+					a.collectionCursor--
+					if a.collectionCursor < a.collectionScroll {
+						a.collectionScroll = a.collectionCursor
+					}
+				}
+			case keyEnter:
+				if a.collectionCursor < len(a.collections) {
+					a.activeCollection = a.collections[a.collectionCursor].Tag
+					a.showCollections = false
+					a.collections = nil
+					a.list.Title = fmt.Sprintf("The Dredger — %s", a.activeCollection)
+					return a, a.loadCollectionLinks
+				}
+			case "q", keyCtrlC:
+				if a.dredgeCancel != nil {
+					a.dredgeCancel()
+				}
+				return a, tea.Quit
+			}
+			return a, nil
+		}
+
 		if a.list.FilterState() == list.Filtering {
 			break // let list handle filter input
 		}
@@ -302,11 +372,21 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.listView = viewPending
 			a.list.Title = "The Dredger — Pending"
 			return a, a.loadLinks
+		case "c":
+			if a.listView == viewSaved {
+				return a, a.loadCollections
+			}
 		case "g":
 			if a.listView == viewSaved {
 				a.mode = modeGrid
 				a.grid = NewGridModel(a.db, a.width, a.height)
 				return a, a.grid.Init()
+			}
+		case keyEsc:
+			if a.activeCollection != "" {
+				a.activeCollection = ""
+				a.list.Title = "The Dredger — Saved"
+				return a, a.loadSavedLinks
 			}
 		case "r":
 			if !a.dredging {
@@ -317,6 +397,15 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.list.SetShowFilter(false)
 			a.recalcListHeight()
 		}
+
+	case TagCountsLoadedMsg:
+		if msg.Err == nil && len(msg.Tags) > 0 {
+			a.collections = msg.Tags
+			a.showCollections = true
+			a.collectionCursor = 0
+			a.collectionScroll = 0
+		}
+		return a, nil
 
 	case LinksLoadedMsg:
 		if msg.Err != nil {
@@ -422,16 +511,23 @@ func (a App) View() tea.View {
 			viewLabel = "saved"
 		}
 
-		gridHint := ""
+		savedHints := ""
 		if a.listView == viewSaved {
-			gridHint = statusTextStyle.Render("g") + " grid  "
+			savedHints = statusTextStyle.Render("c") + " collections  " +
+				statusTextStyle.Render("g") + " grid  "
+		}
+
+		escHint := ""
+		if a.activeCollection != "" {
+			escHint = statusTextStyle.Render("esc") + " all saved  "
 		}
 
 		statusBar := statusBarStyle.Width(a.width).Render(
 			statusTextStyle.Render("q") + " quit  " +
 				statusTextStyle.Render("f") + " focus  " +
 				statusTextStyle.Render("b") + " " + viewLabel + "  " +
-				gridHint +
+				savedHints +
+				escHint +
 				statusTextStyle.Render("r") + " dredge  " +
 				statusTextStyle.Render("/") + " filter  " +
 				statusTextStyle.Render("↑↓") + " navigate",
@@ -475,9 +571,61 @@ func (a App) View() tea.View {
 			lines = append(lines, filler)
 		}
 		content = strings.Join(lines, "\n") + "\n" + bottomChrome
+
+		// Collections overlay
+		if a.showCollections {
+			content = a.viewListCollections()
+		}
 	}
 
 	v := tea.NewView(content)
 	v.AltScreen = true
 	return v
+}
+
+func (a App) viewListCollections() string {
+	titleLine := lipgloss.NewStyle().Bold(true).Foreground(activeColor).Render("◆ Collections")
+
+	var rows []string
+	visibleRows := a.height - 10
+	if visibleRows < 4 {
+		visibleRows = 4
+	}
+
+	endIdx := a.collectionScroll + visibleRows
+	if endIdx > len(a.collections) {
+		endIdx = len(a.collections)
+	}
+
+	for i := a.collectionScroll; i < endIdx; i++ {
+		tc := a.collections[i]
+		dot := lipgloss.NewStyle().Foreground(tagColorForString(tc.Tag)).Render("●")
+		name := tc.Tag
+		count := fmt.Sprintf("(%d)", tc.Count)
+
+		line := fmt.Sprintf("  %s %s %s", dot, name, lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(count))
+		if i == a.collectionCursor {
+			line = lipgloss.NewStyle().Background(lipgloss.Color("#4A3D6B")).Render(line)
+		}
+		rows = append(rows, line)
+	}
+
+	var scrollHints []string
+	if a.collectionScroll > 0 {
+		scrollHints = append(scrollHints, "↑")
+	}
+	if endIdx < len(a.collections) {
+		scrollHints = append(scrollHints, "↓")
+	}
+
+	footerParts := []string{"j/k navigate · Enter select · Esc dismiss"}
+	if len(scrollHints) > 0 {
+		footerParts = append(footerParts, strings.Join(scrollHints, " "))
+	}
+	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(strings.Join(footerParts, "  "))
+
+	content := titleLine + "\n\n" + strings.Join(rows, "\n") + "\n\n" + footer
+	overlay := serendipityOverlayStyle.Render(content)
+
+	return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, overlay)
 }
