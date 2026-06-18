@@ -32,6 +32,11 @@ type NextLinkPrefetchedMsg struct {
 	Link *model.Link
 }
 
+type PreviousLinkLoadedMsg struct {
+	Link *model.Link
+	Err  error
+}
+
 type AnimTickMsg struct{}
 
 type LinkActionedMsg struct {

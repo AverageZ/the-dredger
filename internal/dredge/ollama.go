@@ -22,7 +22,7 @@ func NewOllamaClient(baseURL, model string) *OllamaClient {
 		baseURL = "http://localhost:11434"
 	}
 	if model == "" {
-		model = "gemma3:4b"
+		model = "gemma4:e4b"
 	}
 	return &OllamaClient{
 		baseURL: baseURL,

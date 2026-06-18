@@ -1,6 +1,7 @@
 package dredge
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,26 +21,30 @@ type ResolveResult struct {
 // Resolver detects aggregator URLs and resolves them to the underlying article URL.
 type Resolver interface {
 	Match(rawURL string) bool
-	Resolve(client *http.Client, rawURL string) (ResolveResult, error)
+	Resolve(ctx context.Context, client *http.Client, rawURL string, beforeFetch func(context.Context, string) error) (ResolveResult, error)
 }
 
 const tagSpan = "span"
 
 var resolvers = []Resolver{&HNResolver{}}
 
-// ResolveURL runs the URL through registered resolvers. If none match or
-// resolution fails, it returns the original URL unchanged.
-func ResolveURL(client *http.Client, rawURL string) ResolveResult {
+// ResolveURL runs the URL through registered resolvers. If none match, it
+// returns the original URL unchanged. Resolver fetch failures are returned so
+// callers do not blindly retry a host that may already be rate limiting.
+func ResolveURL(ctx context.Context, client *http.Client, rawURL string, beforeFetch func(context.Context, string) error) (ResolveResult, error) {
 	for _, r := range resolvers {
 		if r.Match(rawURL) {
-			result, err := r.Resolve(client, rawURL)
-			if err != nil || !result.Resolved {
-				return ResolveResult{URL: rawURL}
+			result, err := r.Resolve(ctx, client, rawURL, beforeFetch)
+			if err != nil {
+				return ResolveResult{URL: rawURL}, err
 			}
-			return result
+			if !result.Resolved {
+				return ResolveResult{URL: rawURL}, nil
+			}
+			return result, nil
 		}
 	}
-	return ResolveResult{URL: rawURL}
+	return ResolveResult{URL: rawURL}, nil
 }
 
 // HNResolver resolves Hacker News comment pages to their linked article URLs.
@@ -53,12 +58,28 @@ func (h *HNResolver) Match(rawURL string) bool {
 	return u.Host == "news.ycombinator.com" && u.Path == "/item" && u.Query().Get("id") != ""
 }
 
-func (h *HNResolver) Resolve(client *http.Client, rawURL string) (ResolveResult, error) {
-	resp, err := client.Get(rawURL)
+func (h *HNResolver) Resolve(ctx context.Context, client *http.Client, rawURL string, beforeFetch func(context.Context, string) error) (ResolveResult, error) {
+	if beforeFetch != nil {
+		if err := beforeFetch(ctx, rawURL); err != nil {
+			return ResolveResult{}, err
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return ResolveResult{}, fmt.Errorf("create HN request: %w", err)
+	}
+	req.Header.Set("User-Agent", "TheDredger/1.0")
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return ResolveResult{}, fmt.Errorf("fetch HN page: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return ResolveResult{}, httpStatusError(resp)
+	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

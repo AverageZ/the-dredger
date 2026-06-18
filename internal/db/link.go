@@ -62,7 +62,7 @@ func parseDateStr(s string) time.Time {
 }
 
 func GetLinks(db *sql.DB) ([]model.Link, error) {
-	rows, err := db.Query(`SELECT ` + linkSelectCols + ` FROM links ORDER BY date_added DESC`)
+	rows, err := db.Query(`SELECT ` + linkSelectCols + ` FROM links ORDER BY date_added DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query links: %w", err)
 	}
@@ -79,8 +79,26 @@ func GetLinks(db *sql.DB) ([]model.Link, error) {
 	return links, rows.Err()
 }
 
+func GetBookmarkLinks(db *sql.DB) ([]model.Link, error) {
+	rows, err := db.Query(`SELECT `+linkSelectCols+` FROM links WHERE status != ? ORDER BY date_added DESC, id DESC`, int(model.Pruned))
+	if err != nil {
+		return nil, fmt.Errorf("query bookmark links: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var links []model.Link
+	for rows.Next() {
+		l, err := scanLink(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan link: %w", err)
+		}
+		links = append(links, l)
+	}
+	return links, rows.Err()
+}
+
 func GetLinksByStatus(db *sql.DB, status model.Status) ([]model.Link, error) {
-	rows, err := db.Query(`SELECT `+linkSelectCols+` FROM links WHERE status = ? ORDER BY date_added DESC`, int(status))
+	rows, err := db.Query(`SELECT `+linkSelectCols+` FROM links WHERE status = ? ORDER BY date_added DESC, id DESC`, int(status))
 	if err != nil {
 		return nil, fmt.Errorf("query links by status: %w", err)
 	}
@@ -112,16 +130,43 @@ func UpdateLink(db *sql.DB, link model.Link) error {
 // RestoreLink fully restores a link to a previous snapshot (used by undo).
 func RestoreLink(db *sql.DB, link model.Link) error {
 	tags := strings.Join(link.Tags, ",")
-	_, err := db.Exec(
-		`UPDATE links SET url=?, title=?, description=?, tags=?, status=?, date_added=?, dredge_state=?, dredge_error=?, summary=? WHERE id=?`,
+	res, err := db.Exec(
+		`UPDATE links SET url=?, title=?, description=?, tags=?, status=?, enriched=?, date_added=?, dredge_state=?, dredge_error=?, summary=? WHERE id=?`,
 		link.URL, link.Title, link.Description, tags, int(link.Status),
+		boolToInt(link.Enriched),
 		link.DateAdded.Format("2006-01-02 15:04:05"),
 		int(link.DredgeState), link.DredgeError, link.Summary, link.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("restore link: %w", err)
 	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("restore link rows affected: %w", err)
+	}
+	if affected > 0 {
+		return nil
+	}
+
+	_, err = db.Exec(
+		`INSERT INTO links (id, url, title, description, tags, status, enriched, date_added, dredge_state, dredge_error, summary)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		link.ID, link.URL, link.Title, link.Description, tags, int(link.Status),
+		boolToInt(link.Enriched),
+		link.DateAdded.Format("2006-01-02 15:04:05"),
+		int(link.DredgeState), link.DredgeError, link.Summary,
+	)
+	if err != nil {
+		return fmt.Errorf("restore deleted link: %w", err)
+	}
 	return nil
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func DeleteLink(db *sql.DB, id int64) error {
@@ -133,7 +178,18 @@ func DeleteLink(db *sql.DB, id int64) error {
 }
 
 func GetUnprocessedLinks(db *sql.DB) ([]model.Link, error) {
-	rows, err := db.Query(`SELECT ` + linkSelectCols + ` FROM links WHERE enriched = 0 ORDER BY date_added ASC`)
+	return GetUnprocessedLinksLimit(db, 0)
+}
+
+func GetUnprocessedLinksLimit(db *sql.DB, limit int) ([]model.Link, error) {
+	query := `SELECT ` + linkSelectCols + ` FROM links WHERE status != ? AND (enriched = 0 OR dredge_state = ?) ORDER BY date_added ASC`
+	args := []any{int(model.Pruned), int(model.DredgeCapsized)}
+	if limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, limit)
+	}
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query unprocessed links: %w", err)
 	}
@@ -166,7 +222,7 @@ func GetNextUnprocessedExcluding(db *sql.DB, excludeID int64) (*model.Link, erro
 	row := db.QueryRow(
 		`SELECT `+linkSelectCols+`
 		 FROM links WHERE status = 0 AND date_added <= datetime('now') AND id != ?
-		 ORDER BY date_added ASC LIMIT 1`, excludeID,
+		 ORDER BY date_added DESC, id DESC LIMIT 1`, excludeID,
 	)
 	l, err := scanLink(row)
 	if err == sql.ErrNoRows {
@@ -174,6 +230,122 @@ func GetNextUnprocessedExcluding(db *sql.DB, excludeID int64) (*model.Link, erro
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get next unprocessed: %w", err)
+	}
+	return &l, nil
+}
+
+func GetNextBookmark(db *sql.DB) (*model.Link, error) {
+	return GetNextBookmarkExcluding(db, 0)
+}
+
+func GetNextBookmarkExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT `+linkSelectCols+`
+		 FROM links WHERE status != ? AND date_added <= datetime('now') AND id != ?
+		 ORDER BY date_added DESC, id DESC LIMIT 1`, int(model.Pruned), excludeID,
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get next bookmark: %w", err)
+	}
+	return &l, nil
+}
+
+func GetNextBookmarkAfter(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT next.id, next.url, next.title, next.description, next.tags, next.status,
+		        next.enriched, next.date_added, next.dredge_state, next.dredge_error, next.summary
+		 FROM links AS next
+		 JOIN links AS current ON current.id = ?
+		 WHERE next.status != ?
+		   AND next.date_added <= datetime('now')
+		   AND (
+		       next.date_added < current.date_added
+		       OR (next.date_added = current.date_added AND next.id < current.id)
+		   )
+		 ORDER BY next.date_added DESC, next.id DESC LIMIT 1`, currentID, int(model.Pruned),
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get next bookmark after: %w", err)
+	}
+	return &l, nil
+}
+
+func GetPreviousBookmarkBefore(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT prev.id, prev.url, prev.title, prev.description, prev.tags, prev.status,
+		        prev.enriched, prev.date_added, prev.dredge_state, prev.dredge_error, prev.summary
+		 FROM links AS prev
+		 JOIN links AS current ON current.id = ?
+		 WHERE prev.status != ?
+		   AND prev.date_added <= datetime('now')
+		   AND (
+		       prev.date_added > current.date_added
+		       OR (prev.date_added = current.date_added AND prev.id > current.id)
+		   )
+		 ORDER BY prev.date_added ASC, prev.id ASC LIMIT 1`, currentID, int(model.Pruned),
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get previous bookmark before: %w", err)
+	}
+	return &l, nil
+}
+
+func GetNextUnprocessedAfter(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT next.id, next.url, next.title, next.description, next.tags, next.status,
+		        next.enriched, next.date_added, next.dredge_state, next.dredge_error, next.summary
+		 FROM links AS next
+		 JOIN links AS current ON current.id = ?
+		 WHERE next.status = 0
+		   AND next.date_added <= datetime('now')
+		   AND (
+		       next.date_added < current.date_added
+		       OR (next.date_added = current.date_added AND next.id < current.id)
+		   )
+		 ORDER BY next.date_added DESC, next.id DESC LIMIT 1`, currentID,
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get next unprocessed after: %w", err)
+	}
+	return &l, nil
+}
+
+func GetPreviousUnprocessedBefore(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT prev.id, prev.url, prev.title, prev.description, prev.tags, prev.status,
+		        prev.enriched, prev.date_added, prev.dredge_state, prev.dredge_error, prev.summary
+		 FROM links AS prev
+		 JOIN links AS current ON current.id = ?
+		 WHERE prev.status = 0
+		   AND prev.date_added <= datetime('now')
+		   AND (
+		       prev.date_added > current.date_added
+		       OR (prev.date_added = current.date_added AND prev.id > current.id)
+		   )
+		 ORDER BY prev.date_added ASC, prev.id ASC LIMIT 1`, currentID,
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get previous unprocessed before: %w", err)
 	}
 	return &l, nil
 }
@@ -186,7 +358,7 @@ func GetNextSavedExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
 	row := db.QueryRow(
 		`SELECT `+linkSelectCols+`
 		 FROM links WHERE status = 1 AND id != ?
-		 ORDER BY date_added DESC LIMIT 1`, excludeID,
+		 ORDER BY date_added DESC, id DESC LIMIT 1`, excludeID,
 	)
 	l, err := scanLink(row)
 	if err == sql.ErrNoRows {
@@ -194,6 +366,52 @@ func GetNextSavedExcluding(db *sql.DB, excludeID int64) (*model.Link, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get next saved: %w", err)
+	}
+	return &l, nil
+}
+
+func GetNextSavedAfter(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT next.id, next.url, next.title, next.description, next.tags, next.status,
+		        next.enriched, next.date_added, next.dredge_state, next.dredge_error, next.summary
+		 FROM links AS next
+		 JOIN links AS current ON current.id = ?
+		 WHERE next.status = 1
+		   AND (
+		       next.date_added < current.date_added
+		       OR (next.date_added = current.date_added AND next.id < current.id)
+		   )
+		 ORDER BY next.date_added DESC, next.id DESC LIMIT 1`, currentID,
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get next saved after: %w", err)
+	}
+	return &l, nil
+}
+
+func GetPreviousSavedBefore(db *sql.DB, currentID int64) (*model.Link, error) {
+	row := db.QueryRow(
+		`SELECT prev.id, prev.url, prev.title, prev.description, prev.tags, prev.status,
+		        prev.enriched, prev.date_added, prev.dredge_state, prev.dredge_error, prev.summary
+		 FROM links AS prev
+		 JOIN links AS current ON current.id = ?
+		 WHERE prev.status = 1
+		   AND (
+		       prev.date_added > current.date_added
+		       OR (prev.date_added = current.date_added AND prev.id > current.id)
+		   )
+		 ORDER BY prev.date_added ASC, prev.id ASC LIMIT 1`, currentID,
+	)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get previous saved before: %w", err)
 	}
 	return &l, nil
 }
@@ -225,7 +443,7 @@ func UpdateDredgeState(db *sql.DB, id int64, state model.DredgeState, dredgeErr 
 func UpdateDredgeResult(db *sql.DB, id int64, title, description, summary string, tags []string) error {
 	tagStr := strings.Join(tags, ",")
 	_, err := db.Exec(
-		`UPDATE links SET title=?, description=?, summary=?, tags=?, enriched=1, dredge_state=? WHERE id=? AND status != ?`,
+		`UPDATE links SET title=?, description=?, summary=?, tags=?, enriched=1, dredge_state=?, dredge_error='' WHERE id=? AND status != ?`,
 		title, description, summary, tagStr, int(model.DredgeComplete), id, int(model.Pruned),
 	)
 	if err != nil {
@@ -269,9 +487,13 @@ func CountLinksByStatus(db *sql.DB) (LinkStats, error) {
 }
 
 func GetRandomSavedLinks(database *sql.DB, count int) ([]model.Link, error) {
-	rows, err := database.Query(`SELECT `+linkSelectCols+` FROM links WHERE status = ? ORDER BY RANDOM()`, int(model.Saved))
+	return GetRandomBookmarkLinks(database, count)
+}
+
+func GetRandomBookmarkLinks(database *sql.DB, count int) ([]model.Link, error) {
+	rows, err := database.Query(`SELECT `+linkSelectCols+` FROM links WHERE status != ? ORDER BY RANDOM()`, int(model.Pruned))
 	if err != nil {
-		return nil, fmt.Errorf("query random saved links: %w", err)
+		return nil, fmt.Errorf("query random bookmark links: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -306,15 +528,15 @@ func DeletePrunedLinks(db *sql.DB) (int64, error) {
 	return res.RowsAffected()
 }
 
-// TagCount holds a tag name and how many saved links use it.
+// TagCount holds a tag name and how many bookmark links use it.
 type TagCount struct {
 	Tag   string
 	Count int
 }
 
-// GetTagCounts returns all tags from saved links with their counts, sorted by count desc then alphabetically.
+// GetTagCounts returns all tags from bookmark links with their counts, sorted by count desc then alphabetically.
 func GetTagCounts(database *sql.DB) ([]TagCount, error) {
-	rows, err := database.Query(`SELECT tags FROM links WHERE status = ?`, int(model.Saved))
+	rows, err := database.Query(`SELECT tags FROM links WHERE status != ?`, int(model.Pruned))
 	if err != nil {
 		return nil, fmt.Errorf("query tag counts: %w", err)
 	}

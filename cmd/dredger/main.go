@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"flag"
 	"fmt"
 	"os"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/alexzajac/the-dredger/internal/ingest"
 	"github.com/alexzajac/the-dredger/internal/logging"
 	"github.com/alexzajac/the-dredger/internal/ui"
+	"github.com/alexzajac/the-dredger/internal/webexport"
 )
 
 func main() {
@@ -57,6 +59,9 @@ func main() {
 		case "reset":
 			runReset(database)
 			return
+		case "web":
+			runWeb(database, os.Args[2:])
+			return
 		}
 	}
 
@@ -74,8 +79,8 @@ func runStats(database *sql.DB) {
 		fmt.Fprintf(os.Stderr, "Error getting stats: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Pending: %d\nSaved:   %d\nPruned:  %d\nTotal:   %d\n",
-		stats.Unprocessed, stats.Saved, stats.Pruned, stats.Total)
+	fmt.Printf("Bookmarks: %d\nDeleted:   %d\nTotal:     %d\n",
+		stats.Unprocessed+stats.Saved, stats.Pruned, stats.Total)
 }
 
 func runClean(database *sql.DB) {
@@ -101,6 +106,20 @@ func runReset(database *sql.DB) {
 		os.Exit(1)
 	}
 	fmt.Printf("Deleted %d links. Database is now empty.\n", removed)
+}
+
+func runWeb(database *sql.DB, args []string) {
+	fs := flag.NewFlagSet("web", flag.ExitOnError)
+	out := fs.String("out", webexport.DefaultOutDir, "output folder for the static export")
+	includePruned := fs.Bool("include-pruned", false, "include legacy pruned links in the export")
+	_ = fs.Parse(args)
+
+	opts := webexport.Options{OutDir: *out, IncludePruned: *includePruned}
+	if err := webexport.Run(database, opts); err != nil {
+		fmt.Fprintf(os.Stderr, "Error exporting web dashboard: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Exported static dashboard to %s\nOpen %s/index.html in a browser.\n", opts.OutDir, opts.OutDir)
 }
 
 func runImport(database *sql.DB, path string) {

@@ -36,19 +36,15 @@ type Link struct {
 
 func (s Status) String() string {
 	switch s {
-	case Saved:
-		return "saved"
 	case Pruned:
-		return "pruned"
+		return "deleted"
 	default:
-		return "unprocessed"
+		return "bookmark"
 	}
 }
 
 func (s Status) Color() string {
 	switch s {
-	case Saved:
-		return "#04B575"
 	case Pruned:
 		return "#FF4040"
 	default:

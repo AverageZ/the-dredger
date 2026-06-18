@@ -5,14 +5,17 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 type Config struct {
-	DBPath      string
-	LogPath     string
-	OllamaURL   string
-	OllamaModel string
-	Workers     int
+	DBPath          string
+	LogPath         string
+	OllamaURL       string
+	OllamaModel     string
+	Workers         int
+	DredgeBatchSize int
+	HostDelay       time.Duration
 }
 
 func Load() (Config, error) {
@@ -25,8 +28,11 @@ func Load() (Config, error) {
 		DBPath:      filepath.Join(home, ".dredger", "dredger.db"),
 		LogPath:     filepath.Join(home, ".dredger", "dredger.log"),
 		OllamaURL:   "http://localhost:11434",
-		OllamaModel: "gemma3:4b",
+		OllamaModel: "gemma4:e4b",
 		Workers:     3,
+		// Keep bulk enrichment intentionally bounded and polite by default.
+		DredgeBatchSize: 50,
+		HostDelay:       2 * time.Second,
 	}
 
 	if v := os.Getenv("DREDGER_DB_PATH"); v != "" {
@@ -45,6 +51,18 @@ func Load() (Config, error) {
 		n, err := strconv.Atoi(v)
 		if err == nil && n >= 1 && n <= 16 {
 			cfg.Workers = n
+		}
+	}
+	if v := os.Getenv("DREDGER_DREDGE_BATCH_SIZE"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err == nil && n >= 1 && n <= 1000 {
+			cfg.DredgeBatchSize = n
+		}
+	}
+	if v := os.Getenv("DREDGER_HOST_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err == nil && d >= 0 && d <= time.Minute {
+			cfg.HostDelay = d
 		}
 	}
 

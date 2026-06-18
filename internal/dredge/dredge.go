@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +34,10 @@ type Service struct {
 	workers int
 	results chan Result
 	logger  *slog.Logger
+
+	hostDelay time.Duration
+	hostMu    sync.Mutex
+	lastFetch map[string]time.Time
 }
 
 func NewService(database *sql.DB, workers int, ollamaURL, ollamaModel string, logger *slog.Logger) *Service {
@@ -44,7 +50,14 @@ func NewService(database *sql.DB, workers int, ollamaURL, ollamaModel string, lo
 		workers: workers,
 		results: make(chan Result, workers*2),
 		logger:  logger,
+
+		hostDelay: 2 * time.Second,
+		lastFetch: make(map[string]time.Time),
 	}
+}
+
+func (s *Service) SetHostDelay(delay time.Duration) {
+	s.hostDelay = delay
 }
 
 func (s *Service) Results() <-chan Result {
@@ -137,8 +150,15 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 
 func (s *Service) fetchOne(ctx context.Context, id int64, rawURL string) Result {
 	// Resolve aggregator URLs (e.g. HN comments) to article URLs
-	resolved := ResolveURL(s.client, rawURL)
+	resolved, err := ResolveURL(ctx, s.client, rawURL, s.waitForHost)
+	if err != nil {
+		return Result{LinkID: id, Err: fmt.Errorf("resolve %s: %w", rawURL, err)}
+	}
 	scrapeURL := resolved.URL
+
+	if err := s.waitForHost(ctx, scrapeURL); err != nil {
+		return Result{LinkID: id, Err: err}
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, scrapeURL, nil)
 	if err != nil {
@@ -151,6 +171,10 @@ func (s *Service) fetchOne(ctx context.Context, id int64, rawURL string) Result 
 		return Result{LinkID: id, Err: fmt.Errorf("fetch %s: %w", scrapeURL, err)}
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= http.StatusBadRequest {
+		return Result{LinkID: id, Err: httpStatusError(resp)}
+	}
 
 	limited := io.LimitReader(resp.Body, 1<<20) // 1MB
 	meta := ScrapeMetadata(limited)
@@ -166,4 +190,58 @@ func (s *Service) fetchOne(ctx context.Context, id int64, rawURL string) Result 
 		Description: meta.Description,
 		Comments:    resolved.Comments,
 	}
+}
+
+func (s *Service) waitForHost(ctx context.Context, rawURL string) error {
+	if s.hostDelay <= 0 {
+		return nil
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse URL for host pacing: %w", err)
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return nil
+	}
+
+	now := time.Now()
+	scheduled := now
+
+	s.hostMu.Lock()
+	if last, ok := s.lastFetch[host]; ok {
+		next := last.Add(s.hostDelay)
+		if scheduled.Before(next) {
+			scheduled = next
+		}
+	}
+	s.lastFetch[host] = scheduled
+	s.hostMu.Unlock()
+
+	if wait := time.Until(scheduled); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	return nil
+}
+
+func httpStatusError(resp *http.Response) error {
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	bodyText := strings.TrimSpace(string(body))
+
+	detail := fmt.Sprintf("fetch returned status %d", resp.StatusCode)
+	if retryAfter := strings.TrimSpace(resp.Header.Get("Retry-After")); retryAfter != "" {
+		detail += fmt.Sprintf(" (retry-after: %s)", retryAfter)
+	}
+	if bodyText != "" {
+		detail += fmt.Sprintf(": %s", bodyText)
+	}
+	return fmt.Errorf("%s", detail)
 }

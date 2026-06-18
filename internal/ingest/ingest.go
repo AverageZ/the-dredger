@@ -32,7 +32,7 @@ func BulkInsert(db *sql.DB, urls []string) (inserted, skipped int, err error) {
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`INSERT INTO links (url) VALUES (?)
-		ON CONFLICT(url) DO UPDATE SET date_added = CURRENT_TIMESTAMP`)
+		ON CONFLICT(url) DO NOTHING`)
 	if err != nil {
 		return 0, 0, fmt.Errorf("prepare insert: %w", err)
 	}

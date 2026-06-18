@@ -113,12 +113,12 @@ func (g GridModel) Init() tea.Cmd {
 }
 
 func (g GridModel) loadGridLinks() tea.Msg {
-	links, err := db.GetLinksByStatus(g.db, model.Saved)
+	links, err := db.GetBookmarkLinks(g.db)
 	return GridLinksLoadedMsg{Links: links, Err: err}
 }
 
 func (g GridModel) loadSerendipity() tea.Msg {
-	links, err := db.GetRandomSavedLinks(g.db, 3)
+	links, err := db.GetRandomBookmarkLinks(g.db, 3)
 	return SerendipityResultMsg{Links: links, Err: err}
 }
 
@@ -499,7 +499,7 @@ func (g GridModel) View() string {
 
 	links := g.activeLinks()
 	if len(links) == 0 {
-		empty := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("No saved links to display.")
+		empty := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("No bookmarks to display.")
 		return lipgloss.Place(g.width, g.height, lipgloss.Center, lipgloss.Center, empty)
 	}
 

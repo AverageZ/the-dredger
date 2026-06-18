@@ -29,46 +29,39 @@ Feed it a file containing URLs (one per line, or mixed text — URLs are extract
 ./dredger import ~/bookmarks.txt
 ```
 
+Importing only writes URLs to SQLite; it does not crawl remote sites. Bulk dredging starts only when you press `r` in list mode, and it processes a bounded batch by default.
+
 ## Keybindings
 
 ### List Mode
 
-| Key       | Action                         |
-| --------- | ------------------------------ |
-| `↑` / `↓` | Navigate links                 |
-| `f`       | Enter focus mode               |
-| `b`       | Switch to saved bookmarks view |
-| `/`       | Filter links                   |
-| `q`       | Quit                           |
+| Key           | Action                                               |
+| ------------- | ---------------------------------------------------- |
+| `↑` / `↓`     | Navigate links                                       |
+| `enter` / `f` | Enter focus mode                                     |
+| `c`           | Browse collections by tag                            |
+| `g`           | Open grid view                                       |
+| `d`           | Re-dredge the selected link                          |
+| `r`           | Dredge the next safe batch, including failed dredges |
+| `/`           | Filter links                                         |
+| `q`           | Quit                                                 |
 
-### Focus Mode — Pending Bookmarks
+### Focus Mode
 
-Review pending links one-by-one, Tinder-style:
+Review bookmarks one-by-one:
 
-| Key   | Action                |
-| ----- | --------------------- |
-| `h`   | Prune (soft delete)   |
-| `l`   | Keep (move to saved)  |
-| `s`   | Snooze (stay pending) |
-| `z`   | Undo last action      |
-| `esc` | Back to list          |
-
-### Focus Mode — Saved Bookmarks
-
-Manage saved links with tagging, reading, and enrichment:
-
-| Key   | Action                                        |
-| ----- | --------------------------------------------- |
-| `h`   | Prune (move back to pending)                  |
-| `t`   | Tag                                           |
-| `r`   | Read                                          |
-| `d`   | Dredge (LLM enrich with metadata & summaries) |
-| `z`   | Undo last action                              |
-| `esc` | Back to list                                  |
+| Key   | Action                                       |
+| ----- | -------------------------------------------- |
+| `h`   | Delete bookmark                              |
+| `t`   | Tag                                          |
+| `r`   | Read                                         |
+| `d`   | Re-dredge with metadata, summaries, and tags |
+| `z`   | Undo last delete                             |
+| `esc` | Back to list                                 |
 
 ### Dredging States
 
-When you press `d` on a saved bookmark, dredging progresses through:
+When you press `d` on a link, dredging progresses through:
 
 1. **Crawling** — the link is being fetched and data gathered
 2. **Crunching** — contents are being summarized by an LLM
@@ -79,13 +72,27 @@ When you press `d` on a saved bookmark, dredging progresses through:
 
 All data lives in a SQLite database at `~/.dredger/dredger.db`.
 
+## Dredging Safety
+
+The crawler is conservative by default:
+
+- `DREDGER_DREDGE_BATCH_SIZE=50` limits each list-mode dredge batch
+- `DREDGER_WORKERS=3` controls total crawl concurrency
+- `DREDGER_HOST_DELAY=2s` spaces requests to the same host
+
+For a very large import, start gently:
+
+```bash
+DREDGER_WORKERS=1 DREDGER_DREDGE_BATCH_SIZE=25 DREDGER_HOST_DELAY=5s ./dredger
+```
+
 ## Maintenance Commands
 
 ```bash
-# Show link counts by status
+# Show bookmark counts
 ./dredger stats
 
-# Permanently remove all pruned links
+# Permanently remove legacy pruned links
 ./dredger clean
 
 # Delete all links and start fresh (prompts for confirmation)

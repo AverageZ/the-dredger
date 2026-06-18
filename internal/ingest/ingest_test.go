@@ -122,14 +122,15 @@ func TestBulkInsert(t *testing.T) {
 			t.Fatalf("first BulkInsert: %v", err)
 		}
 		// Second insert with same URL
-		inserted, _, err := BulkInsert(database, []string{"https://dup.com", "https://new.com"})
+		inserted, skipped, err := BulkInsert(database, []string{"https://dup.com", "https://new.com"})
 		if err != nil {
 			t.Fatalf("second BulkInsert: %v", err)
 		}
-		// ON CONFLICT DO UPDATE counts as affected, so both may count as inserted
-		// At minimum, verify no error and at least 1 new URL inserted
-		if inserted < 1 {
-			t.Errorf("expected at least 1 inserted, got %d", inserted)
+		if inserted != 1 {
+			t.Errorf("inserted = %d, want 1", inserted)
+		}
+		if skipped != 1 {
+			t.Errorf("skipped = %d, want 1", skipped)
 		}
 	})
 }

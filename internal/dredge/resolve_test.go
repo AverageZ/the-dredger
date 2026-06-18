@@ -1,6 +1,7 @@
 package dredge
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -71,7 +72,10 @@ func TestExtractHNArticleURL_AskHN(t *testing.T) {
 
 func TestResolveURL_NonAggregator(t *testing.T) {
 	u := "https://example.com/some-page"
-	result := ResolveURL(http.DefaultClient, u)
+	result, err := ResolveURL(context.Background(), http.DefaultClient, u, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if result.Resolved {
 		t.Error("expected Resolved=false for non-aggregator URL")
 	}
@@ -89,7 +93,7 @@ func TestHNResolverResolve(t *testing.T) {
 	hnURL := srv.URL + "/item?id=12345"
 
 	r := &HNResolver{}
-	result, err := r.Resolve(srv.Client(), hnURL)
+	result, err := r.Resolve(context.Background(), srv.Client(), hnURL, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

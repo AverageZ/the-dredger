@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/alexzajac/the-dredger/internal/model"
@@ -67,12 +68,12 @@ func TestInitSchema_Indexes(t *testing.T) {
 func TestGetTagCounts(t *testing.T) {
 	db := setupTestDB(t)
 
-	// Insert saved links with overlapping tags
+	// Insert bookmark links with overlapping tags.
 	links := []model.Link{
 		{URL: "https://a.com", Tags: []string{"go", "cli"}, Status: model.Saved},
 		{URL: "https://b.com", Tags: []string{"go", "tui"}, Status: model.Saved},
 		{URL: "https://c.com", Tags: []string{"go", "cli", "sqlite"}, Status: model.Saved},
-		{URL: "https://d.com", Tags: []string{"python"}, Status: model.Unprocessed}, // should be excluded
+		{URL: "https://d.com", Tags: []string{"python"}, Status: model.Unprocessed},
 	}
 	for _, l := range links {
 		id, err := InsertLink(db, l)
@@ -90,9 +91,9 @@ func TestGetTagCounts(t *testing.T) {
 		t.Fatalf("GetTagCounts: %v", err)
 	}
 
-	// go=3, cli=2, tui=1, sqlite=1
-	if len(counts) != 4 {
-		t.Fatalf("expected 4 tags, got %d: %v", len(counts), counts)
+	// go=3, cli=2, python=1, sqlite=1, tui=1
+	if len(counts) != 5 {
+		t.Fatalf("expected 5 tags, got %d: %v", len(counts), counts)
 	}
 	if counts[0].Tag != "go" || counts[0].Count != 3 {
 		t.Errorf("first tag = %v, want {go, 3}", counts[0])
@@ -100,12 +101,15 @@ func TestGetTagCounts(t *testing.T) {
 	if counts[1].Tag != "cli" || counts[1].Count != 2 {
 		t.Errorf("second tag = %v, want {cli, 2}", counts[1])
 	}
-	// sqlite and tui both have count 1, sorted alphabetically
-	if counts[2].Tag != "sqlite" {
-		t.Errorf("third tag = %q, want sqlite", counts[2].Tag)
+	// Count-1 tags are sorted alphabetically.
+	if counts[2].Tag != "python" {
+		t.Errorf("third tag = %q, want python", counts[2].Tag)
 	}
-	if counts[3].Tag != "tui" {
-		t.Errorf("fourth tag = %q, want tui", counts[3].Tag)
+	if counts[3].Tag != "sqlite" {
+		t.Errorf("fourth tag = %q, want sqlite", counts[3].Tag)
+	}
+	if counts[4].Tag != "tui" {
+		t.Errorf("fifth tag = %q, want tui", counts[4].Tag)
 	}
 }
 
@@ -317,4 +321,158 @@ func TestGetNextUnprocessedExcluding(t *testing.T) {
 	if got.URL != "https://second.com" {
 		t.Errorf("URL = %q, want https://second.com", got.URL)
 	}
+}
+
+func TestGetNextUnprocessedAfterFollowsInboxOrder(t *testing.T) {
+	db := setupTestDB(t)
+
+	oldest := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/oldest"}, "2024-01-01 10:00:00")
+	middle := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/middle"}, "2024-01-02 10:00:00")
+	newest := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/newest"}, "2024-01-03 10:00:00")
+
+	got, err := GetNextUnprocessedAfter(db, newest)
+	if err != nil {
+		t.Fatalf("GetNextUnprocessedAfter newest: %v", err)
+	}
+	if got == nil || got.ID != middle {
+		t.Fatalf("after newest got %#v, want middle ID %d", got, middle)
+	}
+
+	got, err = GetNextUnprocessedAfter(db, middle)
+	if err != nil {
+		t.Fatalf("GetNextUnprocessedAfter middle: %v", err)
+	}
+	if got == nil || got.ID != oldest {
+		t.Fatalf("after middle got %#v, want oldest ID %d", got, oldest)
+	}
+
+	got, err = GetNextUnprocessedAfter(db, oldest)
+	if err != nil {
+		t.Fatalf("GetNextUnprocessedAfter oldest: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("after oldest got %#v, want nil", got)
+	}
+}
+
+func TestGetPreviousUnprocessedBeforeFollowsInboxOrder(t *testing.T) {
+	db := setupTestDB(t)
+
+	oldest := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/oldest"}, "2024-01-01 10:00:00")
+	middle := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/middle"}, "2024-01-02 10:00:00")
+	newest := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/newest"}, "2024-01-03 10:00:00")
+
+	got, err := GetPreviousUnprocessedBefore(db, oldest)
+	if err != nil {
+		t.Fatalf("GetPreviousUnprocessedBefore oldest: %v", err)
+	}
+	if got == nil || got.ID != middle {
+		t.Fatalf("before oldest got %#v, want middle ID %d", got, middle)
+	}
+
+	got, err = GetPreviousUnprocessedBefore(db, middle)
+	if err != nil {
+		t.Fatalf("GetPreviousUnprocessedBefore middle: %v", err)
+	}
+	if got == nil || got.ID != newest {
+		t.Fatalf("before middle got %#v, want newest ID %d", got, newest)
+	}
+
+	got, err = GetPreviousUnprocessedBefore(db, newest)
+	if err != nil {
+		t.Fatalf("GetPreviousUnprocessedBefore newest: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("before newest got %#v, want nil", got)
+	}
+}
+
+func TestGetNextUnprocessedAfterUsesIDTieBreaker(t *testing.T) {
+	db := setupTestDB(t)
+
+	first := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/first"}, "2024-01-01 10:00:00")
+	second := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/second"}, "2024-01-01 10:00:00")
+	third := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/third"}, "2024-01-01 10:00:00")
+
+	got, err := GetNextUnprocessedAfter(db, third)
+	if err != nil {
+		t.Fatalf("GetNextUnprocessedAfter third: %v", err)
+	}
+	if got == nil || got.ID != second {
+		t.Fatalf("after third got %#v, want second ID %d", got, second)
+	}
+
+	got, err = GetNextUnprocessedAfter(db, second)
+	if err != nil {
+		t.Fatalf("GetNextUnprocessedAfter second: %v", err)
+	}
+	if got == nil || got.ID != first {
+		t.Fatalf("after second got %#v, want first ID %d", got, first)
+	}
+}
+
+func TestGetPreviousUnprocessedBeforeUsesIDTieBreaker(t *testing.T) {
+	db := setupTestDB(t)
+
+	first := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/first"}, "2024-01-01 10:00:00")
+	second := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/second"}, "2024-01-01 10:00:00")
+	third := insertDatedLink(t, db, model.Link{URL: "https://inbox.com/third"}, "2024-01-01 10:00:00")
+
+	got, err := GetPreviousUnprocessedBefore(db, first)
+	if err != nil {
+		t.Fatalf("GetPreviousUnprocessedBefore first: %v", err)
+	}
+	if got == nil || got.ID != second {
+		t.Fatalf("before first got %#v, want second ID %d", got, second)
+	}
+
+	got, err = GetPreviousUnprocessedBefore(db, second)
+	if err != nil {
+		t.Fatalf("GetPreviousUnprocessedBefore second: %v", err)
+	}
+	if got == nil || got.ID != third {
+		t.Fatalf("before second got %#v, want third ID %d", got, third)
+	}
+}
+
+func TestGetNextSavedAfterFollowsLibraryOrder(t *testing.T) {
+	db := setupTestDB(t)
+
+	oldest := insertDatedLink(t, db, model.Link{URL: "https://library.com/oldest", Status: model.Saved}, "2024-01-01 10:00:00")
+	newest := insertDatedLink(t, db, model.Link{URL: "https://library.com/newest", Status: model.Saved}, "2024-01-02 10:00:00")
+
+	got, err := GetNextSavedAfter(db, newest)
+	if err != nil {
+		t.Fatalf("GetNextSavedAfter newest: %v", err)
+	}
+	if got == nil || got.ID != oldest {
+		t.Fatalf("after newest got %#v, want oldest ID %d", got, oldest)
+	}
+}
+
+func TestGetPreviousSavedBeforeFollowsLibraryOrder(t *testing.T) {
+	db := setupTestDB(t)
+
+	oldest := insertDatedLink(t, db, model.Link{URL: "https://library.com/oldest", Status: model.Saved}, "2024-01-01 10:00:00")
+	newest := insertDatedLink(t, db, model.Link{URL: "https://library.com/newest", Status: model.Saved}, "2024-01-02 10:00:00")
+
+	got, err := GetPreviousSavedBefore(db, oldest)
+	if err != nil {
+		t.Fatalf("GetPreviousSavedBefore oldest: %v", err)
+	}
+	if got == nil || got.ID != newest {
+		t.Fatalf("before oldest got %#v, want newest ID %d", got, newest)
+	}
+}
+
+func insertDatedLink(t *testing.T, database *sql.DB, link model.Link, dateAdded string) int64 {
+	t.Helper()
+	id, err := InsertLink(database, link)
+	if err != nil {
+		t.Fatalf("insert dated link: %v", err)
+	}
+	if _, err := database.Exec(`UPDATE links SET status = ?, date_added = ? WHERE id = ?`, int(link.Status), dateAdded, id); err != nil {
+		t.Fatalf("set dated link date: %v", err)
+	}
+	return id
 }

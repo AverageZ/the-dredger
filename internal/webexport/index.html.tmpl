@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Dredger — Idea Mine</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">✦</span>
+      <span class="brand-name">The Dredger</span>
+      <span class="brand-sub">idea mine</span>
+    </div>
+    <div class="generated">snapshot · {{.GeneratedAt}}</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="overview">Overview</button>
+    <button class="tab" data-view="bookmarks">Bookmarks</button>
+    <button class="tab" data-view="tags">Tags</button>
+    <button class="tab" data-view="domains">Domains</button>
+    <button class="tab" data-view="serendipity">Serendipity</button>
+  </nav>
+
+  <main id="views">
+    <section class="view active" data-view="overview"></section>
+    <section class="view" data-view="bookmarks"></section>
+    <section class="view" data-view="tags"></section>
+    <section class="view" data-view="domains"></section>
+    <section class="view" data-view="serendipity"></section>
+  </main>
+
+  <footer class="foot">
+    This export is a local snapshot and may contain private URLs and summaries. Read-only.
+  </footer>
+
+  <script id="dredger-data" type="application/json">{{.Data}}</script>
+  <script src="app.js"></script>
+</body>
+</html>

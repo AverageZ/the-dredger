@@ -135,6 +135,49 @@ func TestDeleteLink(t *testing.T) {
 	}
 }
 
+func TestRestoreLinkReinsertsDeletedLink(t *testing.T) {
+	db := setupTestDB(t)
+
+	link := model.Link{
+		URL:         "https://restore-deleted.com",
+		Title:       "Restore me",
+		Description: "Deleted by focus mode",
+		Tags:        []string{"undo"},
+		Status:      model.Unprocessed,
+	}
+	id, err := InsertLink(db, link)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := UpdateDredgeResult(db, id, link.Title, link.Description, "A restorable bookmark", link.Tags); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	links, err := GetLinks(db)
+	if err != nil {
+		t.Fatalf("get links: %v", err)
+	}
+	link = links[0]
+	link.ID = id
+
+	if err := DeleteLink(db, id); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := RestoreLink(db, link); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	restored, err := GetLinks(db)
+	if err != nil {
+		t.Fatalf("get restored links: %v", err)
+	}
+	if len(restored) != 1 {
+		t.Fatalf("got %d links, want 1", len(restored))
+	}
+	if restored[0].ID != id || restored[0].URL != link.URL || !restored[0].Enriched {
+		t.Fatalf("restored link = %+v, want original id/url/enriched", restored[0])
+	}
+}
+
 func TestGetLinksByStatus(t *testing.T) {
 	db := setupTestDB(t)
 
@@ -211,5 +254,69 @@ func TestCountLinksByStatus(t *testing.T) {
 	}
 	if stats.Total != 3 {
 		t.Errorf("Total = %d, want 3", stats.Total)
+	}
+}
+
+func TestGetUnprocessedLinksLimit(t *testing.T) {
+	db := setupTestDB(t)
+
+	links := []model.Link{
+		{URL: "https://limit.com/a"},
+		{URL: "https://limit.com/b"},
+		{URL: "https://limit.com/c"},
+		{URL: "https://limit.com/pruned", Status: model.Pruned},
+	}
+	for _, l := range links {
+		id, err := InsertLink(db, l)
+		if err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+		if l.Status == model.Pruned {
+			l.ID = id
+			if err := UpdateLink(db, l); err != nil {
+				t.Fatalf("update pruned: %v", err)
+			}
+		}
+	}
+
+	got, err := GetUnprocessedLinksLimit(db, 2)
+	if err != nil {
+		t.Fatalf("GetUnprocessedLinksLimit: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d links, want 2", len(got))
+	}
+	for _, l := range got {
+		if l.Status == model.Pruned {
+			t.Fatalf("pruned link was returned: %v", l)
+		}
+	}
+}
+
+func TestGetUnprocessedLinksLimitIncludesCapsizedEnrichedLinks(t *testing.T) {
+	db := setupTestDB(t)
+
+	link := model.Link{URL: "https://retry.com"}
+	id, err := InsertLink(db, link)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	if err := UpdateDredgeResult(db, id, "Retry", "crawl succeeded", "", nil); err != nil {
+		t.Fatalf("mark enriched: %v", err)
+	}
+	if err := UpdateDredgeState(db, id, model.DredgeCapsized, "ollama failed"); err != nil {
+		t.Fatalf("mark capsized: %v", err)
+	}
+
+	got, err := GetUnprocessedLinksLimit(db, 10)
+	if err != nil {
+		t.Fatalf("GetUnprocessedLinksLimit: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d links, want 1", len(got))
+	}
+	if got[0].ID != id {
+		t.Fatalf("got link ID %d, want %d", got[0].ID, id)
 	}
 }

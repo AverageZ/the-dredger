@@ -30,12 +30,7 @@ const (
 	modeGrid  appMode = 2
 )
 
-type listView int
-
-const (
-	viewPending listView = iota
-	viewSaved
-)
+const bookmarksTitle = "The Dredger — Bookmarks"
 
 type App struct {
 	db     *sql.DB
@@ -45,10 +40,9 @@ type App struct {
 	width  int
 	height int
 
-	mode     appMode
-	focus    FocusModel
-	grid     GridModel
-	listView listView
+	mode  appMode
+	focus FocusModel
+	grid  GridModel
 
 	spinner      spinner.Model
 	progress     progress.Model
@@ -58,7 +52,7 @@ type App struct {
 	dredgeCancel context.CancelFunc
 	resultsCh    <-chan dredge.Result
 
-	// Collections overlay (saved list view)
+	// Collections overlay (bookmark list view)
 	collections      []db.TagCount
 	showCollections  bool
 	collectionCursor int
@@ -69,7 +63,7 @@ type App struct {
 func NewApp(database *sql.DB, cfg config.Config, logger *slog.Logger) App {
 	delegate := list.NewDefaultDelegate()
 	l := list.New([]list.Item{}, delegate, 0, 0)
-	l.Title = "The Dredger — Pending"
+	l.Title = bookmarksTitle
 	l.Styles.Title = titleStyle
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
@@ -89,7 +83,6 @@ func NewApp(database *sql.DB, cfg config.Config, logger *slog.Logger) App {
 		list:     l,
 		spinner:  s,
 		progress: p,
-		listView: viewPending,
 	}
 }
 
@@ -117,7 +110,7 @@ func (a App) loadCollections() tea.Msg {
 }
 
 func (a App) loadCollectionLinks() tea.Msg {
-	links, err := db.GetLinksByStatus(a.db, model.Saved)
+	links, err := db.GetBookmarkLinks(a.db)
 	if err != nil {
 		return LinksLoadedMsg{Err: err}
 	}
@@ -134,32 +127,24 @@ func (a App) loadCollectionLinks() tea.Msg {
 }
 
 func (a App) loadLinks() tea.Msg {
-	links, err := db.GetLinksByStatus(a.db, model.Unprocessed)
+	links, err := db.GetBookmarkLinks(a.db)
 	return LinksLoadedMsg{Links: links, Err: err}
 }
 
-func (a App) loadSavedLinks() tea.Msg {
-	links, err := db.GetLinksByStatus(a.db, model.Saved)
-	return LinksLoadedMsg{Links: links, Err: err}
-}
-
-func (a App) startDredge() tea.Cmd {
+func (a App) startDredge(links []model.Link) tea.Cmd {
 	return func() tea.Msg {
-		unprocessed, err := db.GetUnprocessedLinks(a.db)
-		if err != nil {
-			return DredgeDoneMsg{Err: fmt.Errorf("fetch unprocessed links: %w", err)}
-		}
-		if len(unprocessed) == 0 {
+		if len(links) == 0 {
 			return DredgeDoneMsg{}
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
 
 		svc := dredge.NewService(a.db, a.cfg.Workers, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
-		go svc.Run(ctx, unprocessed)
+		svc.SetHostDelay(a.cfg.HostDelay)
+		go svc.Run(ctx, links)
 
 		return dredgeStartInternal{
-			total:   len(unprocessed),
+			total:   len(links),
 			cancel:  cancel,
 			results: svc.Results(),
 		}
@@ -190,6 +175,7 @@ func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 		}
 
 		svc := dredge.NewService(a.db, 1, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
+		svc.SetHostDelay(a.cfg.HostDelay)
 		link := model.Link{ID: linkID, URL: url}
 		ctx := context.Background()
 
@@ -199,9 +185,13 @@ func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 
 		if result.Err != nil {
 			return DredgeLinkResultMsg{
-				LinkID: linkID,
-				State:  model.DredgeCapsized,
-				Error:  result.Err.Error(),
+				LinkID:      linkID,
+				State:       model.DredgeCapsized,
+				Title:       result.Title,
+				Description: result.Description,
+				Summary:     result.Summary,
+				Tags:        result.Tags,
+				Error:       result.Err.Error(),
 			}
 		}
 
@@ -231,9 +221,6 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case FocusExitMsg:
 		a.mode = modeList
-		if a.listView == viewSaved {
-			return a, a.loadSavedLinks
-		}
 		return a, a.loadLinks
 	}
 
@@ -289,7 +276,7 @@ func (a App) updateGrid(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case GridExitMsg:
 		a.mode = modeList
-		return a, a.loadSavedLinks
+		return a, a.loadLinks
 	}
 
 	var cmd tea.Cmd
@@ -350,47 +337,40 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.dredgeCancel()
 			}
 			return a, tea.Quit
-		case "f":
+		case "f", keyEnter:
 			a.mode = modeFocus
-			ctx := focusPending
-			if a.listView == viewSaved {
-				ctx = focusSaved
-			}
 			var startLink *model.Link
 			if sel, ok := a.list.SelectedItem().(linkItem); ok {
 				link := sel.link
 				startLink = &link
 			}
-			a.focus = NewFocusModel(a.db, a.logger, a.width, a.height, ctx, startLink)
+			a.focus = NewFocusModel(a.db, a.logger, a.width, a.height, startLink)
 			return a, a.focus.Init()
-		case "b":
-			if a.listView == viewPending {
-				a.listView = viewSaved
-				a.list.Title = "The Dredger — Saved"
-				return a, a.loadSavedLinks
-			}
-			a.listView = viewPending
-			a.list.Title = "The Dredger — Pending"
-			return a, a.loadLinks
 		case "c":
-			if a.listView == viewSaved {
-				return a, a.loadCollections
-			}
+			return a, a.loadCollections
 		case "g":
-			if a.listView == viewSaved {
-				a.mode = modeGrid
-				a.grid = NewGridModel(a.db, a.width, a.height)
-				return a, a.grid.Init()
-			}
+			a.mode = modeGrid
+			a.grid = NewGridModel(a.db, a.width, a.height)
+			return a, a.grid.Init()
 		case keyEsc:
 			if a.activeCollection != "" {
 				a.activeCollection = ""
-				a.list.Title = "The Dredger — Saved"
-				return a, a.loadSavedLinks
+				a.list.Title = bookmarksTitle
+				return a, a.loadLinks
+			}
+		case "d":
+			if sel, ok := a.list.SelectedItem().(linkItem); ok {
+				cmd := a.dredgeSingleLink(sel.link.ID, sel.link.URL)
+				sel.link.DredgeState = model.DredgeCrawling
+				sel.link.DredgeError = ""
+				a.list.SetItem(a.list.Index(), sel)
+				return a, cmd
 			}
 		case "r":
 			if !a.dredging {
-				return a, a.startDredge()
+				links := a.visiblePageLinksForDredge()
+				a.markLinksDredging(links)
+				return a, a.startDredge(links)
 			}
 		case "/":
 			a.list.SetFilteringEnabled(true)
@@ -417,9 +397,6 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			items[i] = linkItem{link: l}
 		}
 		a.list.SetItems(items)
-		if a.listView == viewPending && !a.dredging {
-			return a, a.startDredge()
-		}
 		return a, nil
 
 	case dredgeStartInternal:
@@ -446,6 +423,10 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.recalcListHeight()
 		return a, nil
 
+	case DredgeLinkResultMsg:
+		a.updateListItemFromLinkResult(msg)
+		return a, nil
+
 	case spinner.TickMsg:
 		if a.dredging {
 			var cmd tea.Cmd
@@ -469,6 +450,50 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+func (a App) visiblePageLinksForDredge() []model.Link {
+	items := a.list.VisibleItems()
+	if len(items) == 0 {
+		return nil
+	}
+
+	start, end := a.list.Paginator.GetSliceBounds(len(items))
+	if start >= len(items) || end <= start {
+		return nil
+	}
+	links := make([]model.Link, 0, end-start)
+	for _, item := range items[start:end] {
+		if li, ok := item.(linkItem); ok {
+			links = append(links, li.link)
+		}
+	}
+	return links
+}
+
+func (a *App) markLinksDredging(links []model.Link) {
+	if len(links) == 0 {
+		return
+	}
+
+	ids := make(map[int64]struct{}, len(links))
+	for _, l := range links {
+		ids[l.ID] = struct{}{}
+	}
+
+	items := a.list.Items()
+	for i, item := range items {
+		li, ok := item.(linkItem)
+		if !ok {
+			continue
+		}
+		if _, ok := ids[li.link.ID]; !ok {
+			continue
+		}
+		li.link.DredgeState = model.DredgeCrawling
+		li.link.DredgeError = ""
+		a.list.SetItem(i, li)
+	}
+}
+
 func (a *App) updateListItem(result dredge.Result) {
 	items := a.list.Items()
 	for i, item := range items {
@@ -477,12 +502,53 @@ func (a *App) updateListItem(result dredge.Result) {
 			continue
 		}
 		if li.link.ID == result.LinkID {
-			if result.Err == nil {
+			if result.Title != "" {
 				li.link.Title = result.Title
+			}
+			if result.Description != "" {
 				li.link.Description = result.Description
+			}
+			if result.Summary != "" {
 				li.link.Summary = result.Summary
+			}
+			if len(result.Tags) > 0 {
 				li.link.Tags = result.Tags
 			}
+			if result.Err != nil {
+				li.link.DredgeState = model.DredgeCapsized
+				li.link.DredgeError = result.Err.Error()
+			} else {
+				li.link.DredgeState = model.DredgeComplete
+				li.link.DredgeError = ""
+			}
+			a.list.SetItem(i, li)
+			return
+		}
+	}
+}
+
+func (a *App) updateListItemFromLinkResult(result DredgeLinkResultMsg) {
+	items := a.list.Items()
+	for i, item := range items {
+		li, ok := item.(linkItem)
+		if !ok {
+			continue
+		}
+		if li.link.ID == result.LinkID {
+			if result.Title != "" {
+				li.link.Title = result.Title
+			}
+			if result.Description != "" {
+				li.link.Description = result.Description
+			}
+			if result.Summary != "" {
+				li.link.Summary = result.Summary
+			}
+			if len(result.Tags) > 0 {
+				li.link.Tags = result.Tags
+			}
+			li.link.DredgeState = result.State
+			li.link.DredgeError = result.Error
 			a.list.SetItem(i, li)
 			return
 		}
@@ -506,29 +572,19 @@ func (a App) View() tea.View {
 			)
 		}
 
-		viewLabel := "pending"
-		if a.listView == viewSaved {
-			viewLabel = "saved"
-		}
-
-		savedHints := ""
-		if a.listView == viewSaved {
-			savedHints = statusTextStyle.Render("c") + " collections  " +
-				statusTextStyle.Render("g") + " grid  "
-		}
-
 		escHint := ""
 		if a.activeCollection != "" {
-			escHint = statusTextStyle.Render("esc") + " all saved  "
+			escHint = statusTextStyle.Render("esc") + " all bookmarks  "
 		}
 
 		statusBar := statusBarStyle.Width(a.width).Render(
 			statusTextStyle.Render("q") + " quit  " +
-				statusTextStyle.Render("f") + " focus  " +
-				statusTextStyle.Render("b") + " " + viewLabel + "  " +
-				savedHints +
+				statusTextStyle.Render("enter/f") + " focus  " +
+				statusTextStyle.Render("c") + " collections  " +
+				statusTextStyle.Render("g") + " grid  " +
 				escHint +
-				statusTextStyle.Render("r") + " dredge  " +
+				statusTextStyle.Render("d") + " retry  " +
+				statusTextStyle.Render("r") + " dredge batch  " +
 				statusTextStyle.Render("/") + " filter  " +
 				statusTextStyle.Render("↑↓") + " navigate",
 		)

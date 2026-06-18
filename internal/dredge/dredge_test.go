@@ -36,9 +36,15 @@ func htmlPage(title, description string) string {
 	</head><body></body></html>`, title, description)
 }
 
+func newTestService(database *sql.DB, workers int, ollamaURL, ollamaModel string) *Service {
+	svc := NewService(database, workers, ollamaURL, ollamaModel, logging.Nop())
+	svc.SetHostDelay(0)
+	return svc
+}
+
 func TestService_RunEmpty(t *testing.T) {
 	database := setupTestDB(t)
-	svc := NewService(database, 2, "http://invalid:0", "", logging.Nop())
+	svc := newTestService(database, 2, "http://invalid:0", "")
 
 	go svc.Run(context.Background(), nil)
 
@@ -68,7 +74,7 @@ func TestService_RunSingleLink(t *testing.T) {
 	link.ID = id
 
 	// Use invalid ollama URL so it skips LLM (ollama not available)
-	svc := NewService(database, 1, "http://invalid:0", "", logging.Nop())
+	svc := newTestService(database, 1, "http://invalid:0", "")
 	go svc.Run(context.Background(), []model.Link{link})
 
 	var results []Result
@@ -109,7 +115,7 @@ func TestService_RunMultipleLinks(t *testing.T) {
 		links = append(links, l)
 	}
 
-	svc := NewService(database, 2, "http://invalid:0", "", logging.Nop())
+	svc := newTestService(database, 2, "http://invalid:0", "")
 	go svc.Run(context.Background(), links)
 
 	count := 0
@@ -146,7 +152,7 @@ func TestService_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	svc := NewService(database, 2, "http://invalid:0", "", logging.Nop())
+	svc := newTestService(database, 2, "http://invalid:0", "")
 	go svc.Run(ctx, links)
 
 	count := 0
@@ -174,14 +180,51 @@ func TestService_FetchError(t *testing.T) {
 	}
 	link.ID = id
 
-	svc := NewService(database, 1, "http://invalid:0", "", logging.Nop())
+	svc := newTestService(database, 1, "http://invalid:0", "")
 	go svc.Run(context.Background(), []model.Link{link})
 
 	result := <-svc.Results()
-	// A 404 doesn't produce an HTTP error — it returns an empty page
-	// The result should still come through (possibly with empty title replaced by URL)
 	if result.LinkID != id {
 		t.Errorf("LinkID = %d, want %d", result.LinkID, id)
+	}
+	if result.Err == nil {
+		t.Fatal("expected error for HTTP 404, got nil")
+	}
+}
+
+func TestService_RateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, "slow down")
+	}))
+	defer srv.Close()
+
+	database := setupTestDB(t)
+	link := model.Link{URL: srv.URL + "/limited"}
+	id, err := db.InsertLink(database, link)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	link.ID = id
+
+	svc := newTestService(database, 1, "http://invalid:0", "")
+	go svc.Run(context.Background(), []model.Link{link})
+
+	result := <-svc.Results()
+	if result.Err == nil {
+		t.Fatal("expected rate-limit error, got nil")
+	}
+
+	links, err := db.GetLinks(database)
+	if err != nil {
+		t.Fatalf("get links: %v", err)
+	}
+	if links[0].Enriched {
+		t.Fatal("rate-limited link was marked enriched")
+	}
+	if links[0].DredgeState != model.DredgeCapsized {
+		t.Errorf("DredgeState = %v, want Capsized", links[0].DredgeState)
 	}
 }
 
@@ -217,7 +260,7 @@ func TestService_WithOllama(t *testing.T) {
 	}
 	link.ID = id
 
-	svc := NewService(database, 1, ollamaSrv.URL, "test-model", logging.Nop())
+	svc := newTestService(database, 1, ollamaSrv.URL, "test-model")
 	go svc.Run(context.Background(), []model.Link{link})
 
 	result := <-svc.Results()

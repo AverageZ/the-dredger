@@ -15,13 +15,6 @@ import (
 	"github.com/alexzajac/the-dredger/internal/model"
 )
 
-type FocusContext int
-
-const (
-	focusPending FocusContext = iota
-	focusSaved
-)
-
 type UndoFrame struct {
 	Link   model.Link
 	Action string
@@ -32,7 +25,6 @@ type FocusModel struct {
 	logger  *slog.Logger
 	current *model.Link
 	next    *model.Link
-	context FocusContext
 
 	descScroll    int
 	descMaxScroll int
@@ -47,12 +39,12 @@ type FocusModel struct {
 
 	width, height int
 
-	kept, pruned int
+	deleted int
 
 	startLink *model.Link
 }
 
-func NewFocusModel(database *sql.DB, logger *slog.Logger, width, height int, ctx FocusContext, startLink *model.Link) FocusModel {
+func NewFocusModel(database *sql.DB, logger *slog.Logger, width, height int, startLink *model.Link) FocusModel {
 	ti := textinput.New()
 	ti.Placeholder = "add tag..."
 	ti.CharLimit = 40
@@ -64,38 +56,40 @@ func NewFocusModel(database *sql.DB, logger *slog.Logger, width, height int, ctx
 		tagInput:  ti,
 		width:     width,
 		height:    height,
-		context:   ctx,
 		startLink: startLink,
 	}
 }
 
 func (f FocusModel) loadNextLink() tea.Msg {
-	var link *model.Link
-	var err error
-	if f.context == focusSaved {
-		link, err = db.GetNextSaved(f.db)
-	} else {
-		link, err = db.GetNextUnprocessed(f.db)
-	}
+	link, err := db.GetNextBookmark(f.db)
 	return NextLinkLoadedMsg{Link: link, Err: err}
 }
 
 func (f FocusModel) prefetchNextLink() tea.Msg {
-	excludeID := int64(0)
-	if f.current != nil {
-		excludeID = f.current.ID
-	}
 	var link *model.Link
 	var err error
-	if f.context == focusSaved {
-		link, err = db.GetNextSavedExcluding(f.db, excludeID)
+	if f.current == nil {
+		link, err = db.GetNextBookmark(f.db)
 	} else {
-		link, err = db.GetNextUnprocessedExcluding(f.db, excludeID)
+		link, err = db.GetNextBookmarkAfter(f.db, f.current.ID)
 	}
 	if err != nil {
-		f.logger.Error("failed to prefetch next link", "exclude_id", excludeID, "err", err)
+		currentID := int64(0)
+		if f.current != nil {
+			currentID = f.current.ID
+		}
+		f.logger.Error("failed to prefetch next link", "current_id", currentID, "err", err)
 	}
 	return NextLinkPrefetchedMsg{Link: link}
+}
+
+func (f FocusModel) loadPreviousLink() tea.Msg {
+	if f.current == nil {
+		return PreviousLinkLoadedMsg{}
+	}
+
+	link, err := db.GetPreviousBookmarkBefore(f.db, f.current.ID)
+	return PreviousLinkLoadedMsg{Link: link, Err: err}
 }
 
 func (f FocusModel) Init() tea.Cmd {
@@ -125,6 +119,23 @@ func (f FocusModel) Update(msg tea.Msg) (FocusModel, tea.Cmd) {
 		f.next = msg.Link
 		return f, nil
 
+	case PreviousLinkLoadedMsg:
+		if msg.Err != nil {
+			if f.current != nil {
+				f.logger.Error("failed to load previous link", "current_id", f.current.ID, "err", msg.Err)
+			} else {
+				f.logger.Error("failed to load previous link", "err", msg.Err)
+			}
+			return f, nil
+		}
+		if msg.Link == nil {
+			return f, nil
+		}
+		f.next = f.current
+		f.current = msg.Link
+		f.descScroll = 0
+		return f, f.prefetchNextLink
+
 	case AnimTickMsg:
 		if !f.anim.active {
 			return f, nil
@@ -137,7 +148,7 @@ func (f FocusModel) Update(msg tea.Msg) (FocusModel, tea.Cmd) {
 			if f.current != nil {
 				return f, f.prefetchNextLink
 			}
-			return f, nil
+			return f, f.loadNextLink
 		}
 		return f, animTick()
 
@@ -212,7 +223,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 
 	case "up", "p":
 		if len(f.browseHistory) == 0 {
-			return f, nil
+			return f, f.loadPreviousLink
 		}
 		// Pop from browse history
 		prev := f.browseHistory[len(f.browseHistory)-1]
@@ -228,48 +239,19 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 			return f, nil
 		}
 		f.browseHistory = nil
-		if f.context == focusSaved {
-			// Saved context: [h] moves to pending (unprocessed)
-			f.undoStack = append(f.undoStack, UndoFrame{
-				Link:   *f.current,
-				Action: "moved to pending",
-			})
-			f.current.Status = model.Unprocessed
-			if err := db.UpdateLink(f.db, *f.current); err != nil {
-				f.logger.Error("failed to move link to pending", "link_id", f.current.ID, "err", err)
-			}
-			f.anim.start(-80, snoozeColor)
-			return f, animTick()
-		}
-		// Pending context: [h] prunes
 		f.undoStack = append(f.undoStack, UndoFrame{
 			Link:   *f.current,
-			Action: "pruned",
+			Action: "deleted",
 		})
-		f.current.Status = model.Pruned
-		if err := db.UpdateLink(f.db, *f.current); err != nil {
-			f.logger.Error("failed to prune link", "link_id", f.current.ID, "err", err)
+		if err := db.DeleteLink(f.db, f.current.ID); err != nil {
+			f.logger.Error("failed to delete link", "link_id", f.current.ID, "err", err)
 		}
-		f.pruned++
+		f.deleted++
 		f.anim.start(-80, pruneColor)
 		return f, animTick()
 
 	case "l":
-		if f.current == nil || f.context == focusSaved {
-			return f, nil
-		}
-		f.browseHistory = nil
-		f.undoStack = append(f.undoStack, UndoFrame{
-			Link:   *f.current,
-			Action: "kept",
-		})
-		f.current.Status = model.Saved
-		if err := db.UpdateLink(f.db, *f.current); err != nil {
-			f.logger.Error("failed to save link", "link_id", f.current.ID, "err", err)
-		}
-		f.kept++
-		f.anim.start(80, keepColor)
-		return f, animTick()
+		return f, nil
 
 	case "t":
 		if f.current == nil {
@@ -280,7 +262,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		return f, cmd
 
 	case "r":
-		if f.current == nil || f.context != focusSaved {
+		if f.current == nil {
 			return f, nil
 		}
 		// Open URL in default browser
@@ -288,9 +270,11 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		return f, nil
 
 	case "d":
-		if f.current == nil || f.context != focusSaved {
+		if f.current == nil {
 			return f, nil
 		}
+		f.current.DredgeState = model.DredgeCrawling
+		f.current.DredgeError = ""
 		return f, func() tea.Msg {
 			return TriggerDredgeLinkMsg{LinkID: f.current.ID, URL: f.current.URL}
 		}
@@ -326,10 +310,8 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		f.current = &restored
 
 		switch frame.Action {
-		case "kept":
-			f.kept--
-		case "pruned":
-			f.pruned--
+		case "deleted":
+			f.deleted--
 		}
 
 		f.anim.active = false
@@ -352,32 +334,19 @@ func (f FocusModel) View() string {
 
 	card := f.renderCard()
 
-	// Help line — context-aware
-	var help string
-	if f.context == focusSaved {
-		help = lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
-			statusTextStyle.Render("h") + " pending  " +
-				statusTextStyle.Render("t") + " tag  " +
-				statusTextStyle.Render("d") + " dredge  " +
-				statusTextStyle.Render("r") + " read  " +
-				statusTextStyle.Render("↑↓") + " navigate  " +
-				statusTextStyle.Render("z") + " undo  " +
-				statusTextStyle.Render("Esc") + " back",
-		)
-	} else {
-		help = lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
-			statusTextStyle.Render("h") + " prune  " +
-				statusTextStyle.Render("l") + " keep  " +
-				statusTextStyle.Render("t") + " tag  " +
-				statusTextStyle.Render("↑↓") + " navigate  " +
-				statusTextStyle.Render("z") + " undo  " +
-				statusTextStyle.Render("Esc") + " back",
-		)
-	}
+	help := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
+		statusTextStyle.Render("h") + " delete  " +
+			statusTextStyle.Render("t") + " tag  " +
+			statusTextStyle.Render("d") + " retry dredge  " +
+			statusTextStyle.Render("r") + " read  " +
+			statusTextStyle.Render("↑↓") + " navigate  " +
+			statusTextStyle.Render("z") + " undo  " +
+			statusTextStyle.Render("Esc") + " back",
+	)
 
 	// Stats line
 	stats := lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render(
-		fmt.Sprintf("Kept: %d | Pruned: %d", f.kept, f.pruned),
+		fmt.Sprintf("Deleted: %d", f.deleted),
 	)
 
 	// Undo toast — show while stack is non-empty
@@ -532,15 +501,9 @@ func (f *FocusModel) renderCard() string {
 }
 
 func (f FocusModel) viewCompletion() string {
-	var message string
-	if f.context == focusSaved {
-		message = "No saved bookmarks yet.\n\n" +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press Esc to return")
-	} else {
-		message = "All caught up!\n\n" +
-			fmt.Sprintf("Kept: %d | Pruned: %d\n\n", f.kept, f.pruned) +
-			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press [b] to view saved bookmarks  |  Esc to return")
-	}
+	message := "No more bookmarks.\n\n" +
+		fmt.Sprintf("Deleted: %d\n\n", f.deleted) +
+		lipgloss.NewStyle().Foreground(lipgloss.Color("#9B9B9B")).Render("Press Esc to return")
 
 	msg := completionStyle.Width(50).Render(message)
 	return lipgloss.Place(f.width, f.height, lipgloss.Center, lipgloss.Center, msg)

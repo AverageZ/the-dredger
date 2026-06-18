@@ -40,3 +40,6 @@ dredger
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Web output
+dredger-web/data.json
