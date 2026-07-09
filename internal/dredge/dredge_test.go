@@ -36,15 +36,15 @@ func htmlPage(title, description string) string {
 	</head><body></body></html>`, title, description)
 }
 
-func newTestService(database *sql.DB, workers int, ollamaURL, ollamaModel string) *Service {
-	svc := NewService(database, workers, ollamaURL, ollamaModel, logging.Nop())
+func newTestService(database *sql.DB, workers int, llm LLMClient) *Service {
+	svc := NewService(database, workers, llm, logging.Nop())
 	svc.SetHostDelay(0)
 	return svc
 }
 
 func TestService_RunEmpty(t *testing.T) {
 	database := setupTestDB(t)
-	svc := newTestService(database, 2, "http://invalid:0", "")
+	svc := newTestService(database, 2, NewOllamaClient("http://invalid:0", ""))
 
 	go svc.Run(context.Background(), nil)
 
@@ -74,7 +74,7 @@ func TestService_RunSingleLink(t *testing.T) {
 	link.ID = id
 
 	// Use invalid ollama URL so it skips LLM (ollama not available)
-	svc := newTestService(database, 1, "http://invalid:0", "")
+	svc := newTestService(database, 1, NewOllamaClient("http://invalid:0", ""))
 	go svc.Run(context.Background(), []model.Link{link})
 
 	var results []Result
@@ -115,7 +115,7 @@ func TestService_RunMultipleLinks(t *testing.T) {
 		links = append(links, l)
 	}
 
-	svc := newTestService(database, 2, "http://invalid:0", "")
+	svc := newTestService(database, 2, NewOllamaClient("http://invalid:0", ""))
 	go svc.Run(context.Background(), links)
 
 	count := 0
@@ -152,7 +152,7 @@ func TestService_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	svc := newTestService(database, 2, "http://invalid:0", "")
+	svc := newTestService(database, 2, NewOllamaClient("http://invalid:0", ""))
 	go svc.Run(ctx, links)
 
 	count := 0
@@ -180,7 +180,7 @@ func TestService_FetchError(t *testing.T) {
 	}
 	link.ID = id
 
-	svc := newTestService(database, 1, "http://invalid:0", "")
+	svc := newTestService(database, 1, NewOllamaClient("http://invalid:0", ""))
 	go svc.Run(context.Background(), []model.Link{link})
 
 	result := <-svc.Results()
@@ -208,7 +208,7 @@ func TestService_RateLimited(t *testing.T) {
 	}
 	link.ID = id
 
-	svc := newTestService(database, 1, "http://invalid:0", "")
+	svc := newTestService(database, 1, NewOllamaClient("http://invalid:0", ""))
 	go svc.Run(context.Background(), []model.Link{link})
 
 	result := <-svc.Results()
@@ -260,7 +260,7 @@ func TestService_WithOllama(t *testing.T) {
 	}
 	link.ID = id
 
-	svc := newTestService(database, 1, ollamaSrv.URL, "test-model")
+	svc := newTestService(database, 1, NewOllamaClient(ollamaSrv.URL, "test-model"))
 	go svc.Run(context.Background(), []model.Link{link})
 
 	result := <-svc.Results()
@@ -272,5 +272,54 @@ func TestService_WithOllama(t *testing.T) {
 	}
 	if len(result.Tags) != 2 || result.Tags[0] != "test" {
 		t.Errorf("Tags = %v, want [test mock]", result.Tags)
+	}
+}
+
+func TestService_WithLMStudio(t *testing.T) {
+	htmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, htmlPage("Test", "A test page"))
+	}))
+	defer htmlSrv.Close()
+
+	lmStudioSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/models" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.URL.Path == "/api/v1/chat" {
+			resp := map[string]any{
+				"output": []map[string]any{
+					{"content": "SUMMARY: An LM Studio summary.\nTAGS: lmstudio, mock"},
+				},
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer lmStudioSrv.Close()
+
+	database := setupTestDB(t)
+	link := model.Link{URL: htmlSrv.URL + "/page"}
+	id, err := db.InsertLink(database, link)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	link.ID = id
+
+	svc := newTestService(database, 1, NewLMStudioClient(lmStudioSrv.URL, "test-model"))
+	go svc.Run(context.Background(), []model.Link{link})
+
+	result := <-svc.Results()
+	if result.Err != nil {
+		t.Fatalf("unexpected error: %v", result.Err)
+	}
+	if result.Summary != "An LM Studio summary." {
+		t.Errorf("Summary = %q, want %q", result.Summary, "An LM Studio summary.")
+	}
+	if len(result.Tags) != 2 || result.Tags[0] != "lmstudio" {
+		t.Errorf("Tags = %v, want [lmstudio mock]", result.Tags)
 	}
 }

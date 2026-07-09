@@ -30,7 +30,7 @@ type Result struct {
 type Service struct {
 	db      *sql.DB
 	client  *http.Client
-	ollama  *OllamaClient
+	llm     LLMClient
 	workers int
 	results chan Result
 	logger  *slog.Logger
@@ -40,13 +40,13 @@ type Service struct {
 	lastFetch map[string]time.Time
 }
 
-func NewService(database *sql.DB, workers int, ollamaURL, ollamaModel string, logger *slog.Logger) *Service {
+func NewService(database *sql.DB, workers int, llm LLMClient, logger *slog.Logger) *Service {
 	return &Service{
 		db: database,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		ollama:  NewOllamaClient(ollamaURL, ollamaModel),
+		llm:     llm,
 		workers: workers,
 		results: make(chan Result, workers*2),
 		logger:  logger,
@@ -81,7 +81,7 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 	}
 	close(jobs)
 
-	ollamaAvailable := s.ollama.Ping()
+	llmAvailable := s.llm != nil && s.llm.Ping()
 
 	var wg sync.WaitGroup
 	for range s.workers {
@@ -106,8 +106,8 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 					if err := db.UpdateDredgeState(s.db, j.id, model.DredgeCapsized, fmt.Sprintf("crawl: %s", result.Err.Error())); err != nil {
 						s.logger.Error("failed to set capsized state", "link_id", j.id, "err", err)
 					}
-				} else if !ollamaAvailable {
-					// Ollama not running — save crawl data, skip crunch
+				} else if !llmAvailable {
+					// LLM service not running — save crawl data, skip crunch
 					if err := db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil); err != nil {
 						s.logger.Error("failed to save crawl result", "link_id", j.id, "err", err)
 					}
@@ -116,7 +116,7 @@ func (s *Service) Run(ctx context.Context, links []model.Link) {
 					if err := db.UpdateDredgeState(s.db, j.id, model.DredgeCrunching, ""); err != nil {
 						s.logger.Error("failed to set crunching state", "link_id", j.id, "err", err)
 					}
-					summary, tags, err := s.ollama.Summarize(ctx, result.Title, result.Description, j.url, result.Comments)
+					summary, tags, err := s.llm.Summarize(ctx, result.Title, result.Description, j.url, result.Comments)
 					if err != nil {
 						// Crawl succeeded but crunch failed — still save crawl data
 						if dbErr := db.UpdateDredgeResult(s.db, j.id, result.Title, result.Description, "", nil); dbErr != nil {

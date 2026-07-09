@@ -80,6 +80,28 @@ The crawler is conservative by default:
 - `DREDGER_WORKERS=3` controls total crawl concurrency
 - `DREDGER_HOST_DELAY=2s` spaces requests to the same host
 
+## LLM Service
+
+Dredger uses Ollama for AI summaries and tags by default:
+
+```bash
+./dredger --service=ollama
+```
+
+You can point dredging at LM Studio instead:
+
+```bash
+./dredger --service=lmstudio
+```
+
+The defaults are:
+
+- `DREDGER_LLM_SERVICE=ollama`
+- `DREDGER_OLLAMA_URL=http://localhost:11434`
+- `DREDGER_OLLAMA_MODEL=gemma4:e4b`
+- `DREDGER_LMSTUDIO_URL=http://127.0.0.1:1234`
+- `DREDGER_LMSTUDIO_MODEL=google/gemma-4-26b-a4b`
+
 For a very large import, start gently:
 
 ```bash

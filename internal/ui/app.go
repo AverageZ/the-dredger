@@ -139,7 +139,7 @@ func (a App) startDredge(links []model.Link) tea.Cmd {
 
 		ctx, cancel := context.WithCancel(context.Background())
 
-		svc := dredge.NewService(a.db, a.cfg.Workers, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
+		svc := dredge.NewService(a.db, a.cfg.Workers, a.newLLMClient(), a.logger)
 		svc.SetHostDelay(a.cfg.HostDelay)
 		go svc.Run(ctx, links)
 
@@ -174,7 +174,7 @@ func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 			a.logger.Error("failed to set crawling state", "link_id", linkID, "err", err)
 		}
 
-		svc := dredge.NewService(a.db, 1, a.cfg.OllamaURL, a.cfg.OllamaModel, a.logger)
+		svc := dredge.NewService(a.db, 1, a.newLLMClient(), a.logger)
 		svc.SetHostDelay(a.cfg.HostDelay)
 		link := model.Link{ID: linkID, URL: url}
 		ctx := context.Background()
@@ -203,6 +203,15 @@ func (a App) dredgeSingleLink(linkID int64, url string) tea.Cmd {
 			Summary:     result.Summary,
 			Tags:        result.Tags,
 		}
+	}
+}
+
+func (a App) newLLMClient() dredge.LLMClient {
+	switch a.cfg.LLMService {
+	case config.LLMServiceLMStudio:
+		return dredge.NewLMStudioClient(a.cfg.LMStudioURL, a.cfg.LMStudioModel)
+	default:
+		return dredge.NewOllamaClient(a.cfg.OllamaURL, a.cfg.OllamaModel)
 	}
 }
 

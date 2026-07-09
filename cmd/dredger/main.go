@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,6 +20,11 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+	args, err := applyRootFlags(&cfg, os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -41,14 +47,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	if len(os.Args) >= 2 {
-		switch os.Args[1] {
+	if len(args) >= 1 {
+		switch args[0] {
 		case "import":
-			if len(os.Args) < 3 {
+			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "Usage: dredger import <file>")
 				os.Exit(1)
 			}
-			runImport(database, os.Args[2])
+			runImport(database, args[1])
 			return
 		case "stats":
 			runStats(database)
@@ -60,7 +66,7 @@ func main() {
 			runReset(database)
 			return
 		case "web":
-			runWeb(database, os.Args[2:])
+			runWeb(database, args[1:])
 			return
 		}
 	}
@@ -71,6 +77,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func applyRootFlags(cfg *config.Config, args []string) ([]string, error) {
+	fs := flag.NewFlagSet("dredger", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	service := fs.String("service", cfg.LLMService, "LLM service for dredging (ollama or lmstudio)")
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	cfg.LLMService = *service
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return fs.Args(), nil
 }
 
 func runStats(database *sql.DB) {
