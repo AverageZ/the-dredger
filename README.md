@@ -29,6 +29,14 @@ Feed it a file containing URLs (one per line, or mixed text — URLs are extract
 ./dredger import ~/bookmarks.txt
 ```
 
+For new finds, add URLs directly without editing your seed file:
+
+```bash
+./dredger add https://example.com/article
+./dredger add "Read this: https://example.com/article and https://example.com/other"
+pbpaste | ./dredger import -
+```
+
 Importing only writes URLs to SQLite; it does not crawl remote sites. Bulk dredging starts only when you press `r` in list mode, and it processes a bounded batch by default.
 
 ## Keybindings

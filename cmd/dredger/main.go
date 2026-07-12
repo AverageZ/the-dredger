@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/alexzajac/the-dredger/internal/config"
@@ -51,10 +52,13 @@ func main() {
 		switch args[0] {
 		case "import":
 			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "Usage: dredger import <file>")
+				fmt.Fprintln(os.Stderr, "Usage: dredger import <file|->")
 				os.Exit(1)
 			}
 			runImport(database, args[1])
+			return
+		case "add":
+			runAdd(database, args[1:])
 			return
 		case "stats":
 			runStats(database)
@@ -145,15 +149,55 @@ func runWeb(database *sql.DB, args []string) {
 }
 
 func runImport(database *sql.DB, path string) {
-	data, err := os.ReadFile(path)
+	data, source, err := readImportInput(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", source, err)
 		os.Exit(1)
 	}
 
-	urls := ingest.ExtractURLs(string(data))
+	importText(database, string(data), source)
+}
+
+func runAdd(database *sql.DB, args []string) {
+	if len(args) > 0 {
+		importText(database, strings.Join(args, " "), "arguments")
+		return
+	}
+
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error checking stdin: %v\n", err)
+		os.Exit(1)
+	}
+	if info.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr, "Usage: dredger add <url-or-text> [url-or-text...]")
+		fmt.Fprintln(os.Stderr, "       pbpaste | dredger add")
+		os.Exit(1)
+	}
+
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
+		os.Exit(1)
+	}
+
+	importText(database, string(data), "stdin")
+}
+
+func readImportInput(path string) ([]byte, string, error) {
+	if path == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		return data, "stdin", err
+	}
+
+	data, err := os.ReadFile(path)
+	return data, "file", err
+}
+
+func importText(database *sql.DB, text, source string) {
+	urls := ingest.ExtractURLs(text)
 	if len(urls) == 0 {
-		fmt.Println("No URLs found in file.")
+		fmt.Printf("No URLs found in %s.\n", source)
 		return
 	}
 
