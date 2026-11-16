@@ -13,12 +13,15 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/model"
+	"github.com/alexzajac/the-dredger/internal/search"
 	"github.com/atotto/clipboard"
 )
 
 const (
 	keyEsc   = "esc"
 	keyEnter = "enter"
+	keyDown  = "down"
+	keyUp    = "up"
 
 	gridCellMinW  = 28
 	gridCellMaxW  = 40
@@ -156,7 +159,7 @@ func (g *GridModel) recalcLayout() {
 }
 
 func (g *GridModel) activeLinks() []model.Link {
-	if (g.searching && g.searchQuery != "") || g.activeCollection != "" {
+	if g.searchQuery != "" || g.activeCollection != "" {
 		return g.filtered
 	}
 	return g.links
@@ -214,20 +217,21 @@ func (g *GridModel) selectedLink() *model.Link {
 	return &links[idx]
 }
 
+// applySearch ranks the loaded links against the current query using the shared
+// scorer, so the grid, the CLI, and any agent calling `dredger search` all agree
+// on what a query means. Results come back best-first rather than in load order,
+// and now match on the AI summary and description too, not just title and tags.
 func (g *GridModel) applySearch() {
+	g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
 	if g.searchQuery == "" {
 		g.filtered = nil
 		return
 	}
-	q := strings.ToLower(g.searchQuery)
-	g.filtered = nil
-	for _, l := range g.links {
-		haystack := strings.ToLower(l.Title + " " + l.URL + " " + strings.Join(l.Tags, " "))
-		if strings.Contains(haystack, q) {
-			g.filtered = append(g.filtered, l)
-		}
+	results := search.Search(g.links, search.Options{Query: g.searchQuery})
+	g.filtered = make([]model.Link, 0, len(results))
+	for _, r := range results {
+		g.filtered = append(g.filtered, r.Link)
 	}
-	g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
 }
 
 func (g GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
@@ -276,9 +280,9 @@ func (g GridModel) updateSerendipity(msg tea.Msg) (GridModel, tea.Cmd) {
 		case keyEsc:
 			g.showSerendipity = false
 			g.serendipityLinks = nil
-		case "j", "down":
+		case "j", keyDown:
 			g.serendipityScroll++
-		case "k", "up":
+		case "k", keyUp:
 			g.serendipityScroll--
 			if g.serendipityScroll < 0 {
 				g.serendipityScroll = 0
@@ -316,7 +320,7 @@ func (g GridModel) updateCollections(msg tea.Msg) (GridModel, tea.Cmd) {
 		case keyEsc:
 			g.showCollections = false
 			g.collections = nil
-		case "j", "down":
+		case "j", keyDown:
 			if g.collectionCursor < len(g.collections)-1 {
 				g.collectionCursor++
 				// scroll if cursor goes below visible area
@@ -328,7 +332,7 @@ func (g GridModel) updateCollections(msg tea.Msg) (GridModel, tea.Cmd) {
 					g.collectionScroll = g.collectionCursor - visibleRows + 1
 				}
 			}
-		case "k", "up":
+		case "k", keyUp:
 			if g.collectionCursor > 0 {
 				g.collectionCursor--
 				if g.collectionCursor < g.collectionScroll {
@@ -452,11 +456,11 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 				}
 			}
 			g.ensureVisible()
-		case "k", "up":
+		case "k", keyUp:
 			g.cursorY--
 			g.clampCursor()
 			g.ensureVisible()
-		case "j", "down":
+		case "j", keyDown:
 			g.cursorY++
 			g.clampCursor()
 			g.ensureVisible()
@@ -477,8 +481,9 @@ func (g GridModel) updateNormal(msg tea.Msg) (GridModel, tea.Cmd) {
 		case "c":
 			return g, g.loadCollections
 		case keyEsc:
-			if g.activeCollection != "" {
+			if g.searchQuery != "" || g.activeCollection != "" {
 				g.activeCollection = ""
+				g.searchQuery = ""
 				g.filtered = nil
 				g.cursorX, g.cursorY, g.scrollY = 0, 0, 0
 				return g, nil

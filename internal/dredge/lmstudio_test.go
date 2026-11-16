@@ -23,7 +23,7 @@ func TestLMStudioSummarize_Success(t *testing.T) {
 
 		resp := map[string]any{
 			"output": []map[string]any{
-				{"content": "SUMMARY: A richer bookmark summary.\nTAGS: bookmarks, ai, research"},
+				{contentKey: "SUMMARY: A richer bookmark summary.\nTAGS: bookmarks, ai, research"},
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")

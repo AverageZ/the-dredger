@@ -39,6 +39,75 @@ pbpaste | ./dredger import -
 
 Importing only writes URLs to SQLite; it does not crawl remote sites. Bulk dredging starts only when you press `r` in list mode, and it processes a bounded batch by default.
 
+## Searching From the Command Line
+
+Install once so `dredger` is on your `PATH`:
+
+```bash
+make install
+```
+
+Then search from anywhere:
+
+```bash
+dredger search wave function collapse
+dredger search "llm agents" --limit 5
+dredger search rendering --tag graphics --full
+dredger show 412
+dredger tags --min-count 5
+```
+
+Results are ranked, not merely filtered. Tags carry the most weight (they are the
+concepts the LLM extracted during dredging), then the title, then the AI summary.
+Strong results must cover every searchable query term; otherwise the best partial
+matches are labeled as suggestions. Prefer a few concept words over a long phrase.
+
+When nothing matches well, dredger says so and offers related tags from your own
+collection rather than printing an empty list:
+
+```
+$ dredger search quantum knitting
+No strong matches for "quantum knitting" — closest 1:
+
+#72      0.50  Zero-K
+               [zero-k, cryogenics, physics, computing, hardware]
+```
+
+| Flag               | Applies to | Description                                        |
+| ------------------ | ---------- | -------------------------------------------------- |
+| `--json`           | all three  | Machine-readable output (the stable contract)       |
+| `--limit N`        | `search`   | Cap results, `0` for all (default 10)               |
+| `--tag T`          | `search`   | Boost links carrying tag `T` (repeatable)           |
+| `--tag-strict`     | `search`   | Require every `--tag` instead of boosting it        |
+| `--domain D`       | `search`   | Only links on host `D`                              |
+| `--full`           | `search`   | Print complete summaries instead of snippets        |
+| `--include-pruned` | `search`   | Also search links you have pruned                   |
+| `--min-count N`    | `tags`     | Hide tags used fewer than `N` times                 |
+
+`search`, `show`, `tags`, and `stats` open the database read-only, so they are
+safe to run while the TUI is open in another terminal.
+
+Grid search (`g`, then `/`) uses the same ranking, including summary and
+description matches. Press Enter to keep the filter while navigating; Escape
+clears it. The list filter and exported web dashboard retain their existing
+search behavior.
+
+`dredger --help` and `dredger search|show|tags --help` work before a database
+exists. Unknown commands exit with status 2 instead of launching the TUI.
+
+### Letting AI agents search your bookmarks
+
+The `--json` output is designed for coding agents mining your bookmarks for
+inspiration. To make Claude Code reach for it automatically in any project,
+install the skill:
+
+```bash
+mkdir -p ~/.claude/skills/dredger-bookmarks
+cp skills/dredger-bookmarks/SKILL.md ~/.claude/skills/dredger-bookmarks/
+```
+
+Being user-level, it applies to every project without per-project configuration.
+
 ## Keybindings
 
 ### List Mode
@@ -127,7 +196,13 @@ DREDGER_WORKERS=1 DREDGER_DREDGE_BATCH_SIZE=25 DREDGER_HOST_DELAY=5s ./dredger
 
 # Delete all links and start fresh (prompts for confirmation)
 ./dredger reset
+
+# Export a standalone static dashboard you can open in a browser
+./dredger web --out ./dredger-web
 ```
+
+Run `dredger help` for the full command list, or `dredger <command> --help` for a
+command's flags.
 
 ## Development
 
@@ -142,8 +217,9 @@ make install-hooks   # activates pre-commit hook
 
 | Target       | Description                               |
 | ------------ | ----------------------------------------- |
-| `make`       | Default — runs fmt, lint, test, and build |
-| `make build` | Compile binary to `./dredger`             |
+| `make`         | Default — runs fmt, lint, test, and build |
+| `make build`   | Compile binary to `./dredger`             |
+| `make install` | Install `dredger` onto your `PATH`        |
 | `make run`   | Build and run                             |
 | `make test`  | Run all tests                             |
 | `make lint`  | Run golangci-lint                         |

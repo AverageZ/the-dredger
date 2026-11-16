@@ -25,9 +25,8 @@ var (
 				Padding(0, 1)
 
 	// Focus mode colors
-	keepColor   = lipgloss.Color("#04B575")
-	pruneColor  = lipgloss.Color("#FF4040")
-	snoozeColor = lipgloss.Color("#FFB347")
+	keepColor  = lipgloss.Color("#04B575")
+	pruneColor = lipgloss.Color("#FF4040")
 
 	// Focus mode card styles
 	cardBorderStyle = lipgloss.NewStyle().

@@ -29,15 +29,24 @@ go mod tidy
 
 **Entry point:** `cmd/dredger/main.go` — opens SQLite DB at `~/.dredger/dredger.db`, initializes schema, launches TUI.
 
-**Five internal packages:**
+**Internal packages:**
 
 - `internal/model/` — Domain types. `Link` struct with Status enum (Unprocessed=0, Saved=1, Pruned=2). Tags stored as `[]string` in Go, comma-separated in DB.
-- `internal/db/` — Data access layer. `db.go` handles connection/schema, `link.go` has CRUD operations (Insert, Get, Update, Delete). Uses parameterized queries, single-connection WAL mode.
-- `internal/ui/` — Bubble Tea TUI. `app.go` is the main model, `list.go` adapts Link to the list component, `styles.go` defines Lipgloss styles (accent: `#7D56F4`).
-- `internal/dredge/` — Enrichment pipeline. `dredge.go` runs a worker pool, `scrape.go` fetches page metadata, `ollama.go` calls Ollama for AI summaries/tags.
+- `internal/db/` — Data access layer. `db.go` handles connection/schema (`Open` for write paths, `OpenReadOnly` for read paths), `link.go` has CRUD operations (Insert, Get, Update, Delete). Uses parameterized queries, single-connection WAL mode.
+- `internal/ui/` — Bubble Tea TUI. `app.go` is the main model, `list.go` adapts Link to the list component, `grid.go` is the grid view, `styles.go` defines Lipgloss styles (accent: `#7D56F4`).
+- `internal/dredge/` — Enrichment pipeline. `dredge.go` runs a worker pool, `scrape.go` fetches page metadata, `ollama.go`/`lmstudio.go` call the LLM for summaries/tags.
 - `internal/ingest/` — Bulk URL import. `ingest.go` extracts URLs from text and batch-inserts via transaction.
+- `internal/search/` — Relevance scoring. Ranks links in memory with field weights (tags > title > summary) and a coverage factor. Backs both `dredger search` and the TUI grid search; there should be exactly one search implementation.
+- `internal/webexport/` — Static HTML dashboard emitted by `dredger web`. No server involved.
+- `internal/config/` — Env-var configuration and validation.
+- `internal/logging/` — File-based `slog` setup.
+- `internal/urlutil/` — Shared URL helpers (`Domain`, `Path`).
 
-**Data flow:** `main.go` → `db.InitSchema()` → `ui.NewApp(db)` → Bubble Tea event loop
+**Data flow (TUI):** `main.go` → `db.Open` → `db.InitSchema()` → `ui.NewApp(db)` → Bubble Tea event loop
+
+**Data flow (read-only CLI):** `main.go` → `db.OpenReadOnly` → `search.Search` → stdout. Read commands (`search`, `show`, `tags`, `stats`) skip `InitSchema` so they never take a write lock while the TUI is running.
+
+**Agent-facing surface:** `dredger search|show|tags` with `--json` is a contract used by AI agents in other projects via `skills/dredger-bookmarks/SKILL.md`. Two rules follow: an unknown subcommand must exit non-zero rather than launching the TUI (Bubble Tea on a non-TTY hangs the caller), and a weak search must return its closest matches plus tag suggestions rather than empty output.
 
 ## Conventions
 
