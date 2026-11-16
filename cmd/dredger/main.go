@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -17,6 +18,18 @@ import (
 	"github.com/alexzajac/the-dredger/internal/webexport"
 )
 
+const (
+	commandSearch = "search"
+	commandShow   = "show"
+	commandTags   = "tags"
+	commandStats  = "stats"
+	commandImport = "import"
+	commandAdd    = "add"
+	commandClean  = "clean"
+	commandReset  = "reset"
+	commandWeb    = "web"
+)
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -25,8 +38,121 @@ func main() {
 	}
 	args, err := applyRootFlags(&cfg, os.Args[1:])
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Print(rootUsage)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error parsing arguments: %v\n", err)
+		os.Exit(2)
+	}
+
+	if len(args) == 0 {
+		runTUI(cfg)
+		return
+	}
+
+	cmd, rest := args[0], args[1:]
+
+	if cmd == "help" {
+		fmt.Print(rootUsage)
+		return
+	}
+
+	if !isReadOnlyCommand(cmd) && !isWriteCommand(cmd) {
+		fmt.Fprintf(os.Stderr, "Unknown command %q.\n\n", cmd)
+		fmt.Fprint(os.Stderr, rootUsage)
+		os.Exit(2)
+	}
+
+	// Read-only commands open the database without a write lock and skip
+	// InitSchema entirely. That is what lets an agent run `dredger search`
+	// while the TUI holds the database open in another terminal.
+	if isReadOnlyCommand(cmd) {
+		// Parse command flags before opening the database, so help and usage
+		// errors also work before the first interactive launch.
+
+		switch cmd {
+		case commandSearch:
+			runSearch(cfg.DBPath, rest)
+		case commandShow:
+			runShow(cfg.DBPath, rest)
+		case commandTags:
+			runTags(cfg.DBPath, rest)
+		case commandStats:
+			database := openReadOnlyDatabase(cfg.DBPath)
+			defer func() { _ = database.Close() }()
+			runStats(database)
+		}
+		return
+	}
+
+	database, err := db.Open(cfg.DBPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
 		os.Exit(1)
+	}
+	defer func() { _ = database.Close() }()
+
+	if err := db.InitSchema(database); err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing schema: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch cmd {
+	case commandImport:
+		if len(rest) < 1 {
+			fmt.Fprintln(os.Stderr, "Usage: dredger import <file|->")
+			os.Exit(1)
+		}
+		runImport(database, rest[0])
+	case commandAdd:
+		runAdd(database, rest)
+	case commandClean:
+		runClean(database)
+	case commandReset:
+		runReset(database)
+	case commandWeb:
+		runWeb(database, rest)
+	}
+}
+
+// readOnlyCommands never write, so they take the read-only database path.
+var readOnlyCommands = map[string]bool{
+	commandSearch: true,
+	commandShow:   true,
+	commandTags:   true,
+	commandStats:  true,
+}
+
+func isReadOnlyCommand(cmd string) bool { return readOnlyCommands[cmd] }
+
+func isWriteCommand(cmd string) bool {
+	switch cmd {
+	case commandImport, commandAdd, commandClean, commandReset, commandWeb:
+		return true
+	default:
+		return false
+	}
+}
+
+func openReadOnlyDatabase(path string) *sql.DB {
+	database, err := db.OpenReadOnly(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening bookmark database at %s: %v — run dredger to create one.\n", path, err)
+		os.Exit(1)
+	}
+	return database
+}
+
+// runTUI launches the interactive interface. It refuses to start without a
+// terminal: Bubble Tea on a pipe blocks forever, which is exactly the failure an
+// agent hits when a command is mistyped.
+func runTUI(cfg config.Config) {
+	info, err := os.Stdout.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice == 0 {
+		fmt.Fprint(os.Stderr, "dredger's interactive UI needs a terminal.\n\n")
+		fmt.Fprint(os.Stderr, rootUsage)
+		os.Exit(2)
 	}
 
 	logger, closeLog, err := logging.Setup(cfg.LogPath)
@@ -46,33 +172,6 @@ func main() {
 	if err := db.InitSchema(database); err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing schema: %v\n", err)
 		os.Exit(1)
-	}
-
-	if len(args) >= 1 {
-		switch args[0] {
-		case "import":
-			if len(args) < 2 {
-				fmt.Fprintln(os.Stderr, "Usage: dredger import <file|->")
-				os.Exit(1)
-			}
-			runImport(database, args[1])
-			return
-		case "add":
-			runAdd(database, args[1:])
-			return
-		case "stats":
-			runStats(database)
-			return
-		case "clean":
-			runClean(database)
-			return
-		case "reset":
-			runReset(database)
-			return
-		case "web":
-			runWeb(database, args[1:])
-			return
-		}
 	}
 
 	app := ui.NewApp(database, cfg, logger)
@@ -135,7 +234,7 @@ func runReset(database *sql.DB) {
 }
 
 func runWeb(database *sql.DB, args []string) {
-	fs := flag.NewFlagSet("web", flag.ExitOnError)
+	fs := flag.NewFlagSet(commandWeb, flag.ExitOnError)
 	out := fs.String("out", webexport.DefaultOutDir, "output folder for the static export")
 	includePruned := fs.Bool("include-pruned", false, "include legacy pruned links in the export")
 	_ = fs.Parse(args)

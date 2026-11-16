@@ -290,7 +290,7 @@ func TestService_WithLMStudio(t *testing.T) {
 		if r.URL.Path == "/api/v1/chat" {
 			resp := map[string]any{
 				"output": []map[string]any{
-					{"content": "SUMMARY: An LM Studio summary.\nTAGS: lmstudio, mock"},
+					{contentKey: "SUMMARY: An LM Studio summary.\nTAGS: lmstudio, mock"},
 				},
 			}
 			w.Header().Set("Content-Type", "application/json")

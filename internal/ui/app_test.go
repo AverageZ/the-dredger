@@ -7,10 +7,15 @@ import (
 	"github.com/alexzajac/the-dredger/internal/model"
 )
 
+const (
+	exampleURL1 = "https://example.com/1"
+	exampleURL2 = "https://example.com/2"
+)
+
 func TestVisiblePageLinksForDredgeUsesCurrentPage(t *testing.T) {
 	app := appWithListLinks([]model.Link{
-		{ID: 1, URL: "https://example.com/1"},
-		{ID: 2, URL: "https://example.com/2"},
+		{ID: 1, URL: exampleURL1},
+		{ID: 2, URL: exampleURL2},
 		{ID: 3, URL: "https://example.com/3"},
 		{ID: 4, URL: "https://example.com/4"},
 		{ID: 5, URL: "https://example.com/5"},
@@ -32,8 +37,8 @@ func TestVisiblePageLinksForDredgeUsesCurrentPage(t *testing.T) {
 
 func TestVisiblePageLinksForDredgeIncludesCompletedLinks(t *testing.T) {
 	app := appWithListLinks([]model.Link{
-		{ID: 1, URL: "https://example.com/1", Enriched: true, DredgeState: model.DredgeComplete},
-		{ID: 2, URL: "https://example.com/2", Enriched: true, DredgeState: model.DredgeComplete},
+		{ID: 1, URL: exampleURL1, Enriched: true, DredgeState: model.DredgeComplete},
+		{ID: 2, URL: exampleURL2, Enriched: true, DredgeState: model.DredgeComplete},
 	})
 	app.list.Paginator.PerPage = 2
 
@@ -50,8 +55,8 @@ func TestVisiblePageLinksForDredgeIncludesCompletedLinks(t *testing.T) {
 
 func TestMarkLinksDredgingUpdatesVisibleItems(t *testing.T) {
 	app := appWithListLinks([]model.Link{
-		{ID: 1, URL: "https://example.com/1", DredgeState: model.DredgeComplete},
-		{ID: 2, URL: "https://example.com/2", DredgeState: model.DredgeCapsized, DredgeError: "old model failed"},
+		{ID: 1, URL: exampleURL1, DredgeState: model.DredgeComplete},
+		{ID: 2, URL: exampleURL2, DredgeState: model.DredgeCapsized, DredgeError: "old model failed"},
 	})
 
 	app.markLinksDredging([]model.Link{{ID: 2}})

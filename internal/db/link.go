@@ -97,6 +97,20 @@ func GetBookmarkLinks(db *sql.DB) ([]model.Link, error) {
 	return links, rows.Err()
 }
 
+// GetLinkByID fetches a single link. It returns a nil link and a nil error when
+// no row matches, so callers can tell "not found" apart from a real failure.
+func GetLinkByID(db *sql.DB, id int64) (*model.Link, error) {
+	row := db.QueryRow(`SELECT `+linkSelectCols+` FROM links WHERE id = ?`, id)
+	l, err := scanLink(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get link by id: %w", err)
+	}
+	return &l, nil
+}
+
 func GetLinksByStatus(db *sql.DB, status model.Status) ([]model.Link, error) {
 	rows, err := db.Query(`SELECT `+linkSelectCols+` FROM links WHERE status = ? ORDER BY date_added DESC, id DESC`, int(status))
 	if err != nil {
