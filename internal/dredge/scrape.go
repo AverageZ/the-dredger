@@ -12,6 +12,8 @@ type PageMeta struct {
 	Description string
 }
 
+const contentKey = "content"
+
 func ScrapeMetadata(body io.Reader) PageMeta {
 	var meta PageMeta
 	z := html.NewTokenizer(body)
@@ -38,7 +40,7 @@ func ScrapeMetadata(body io.Reader) PageMeta {
 					if k == "property" {
 						property = strings.ToLower(string(val))
 					}
-					if k == "content" {
+					if k == contentKey {
 						content = string(val)
 					}
 					if !more {

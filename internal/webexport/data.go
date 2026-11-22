@@ -1,13 +1,12 @@
 package webexport
 
 import (
-	"net/url"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/alexzajac/the-dredger/internal/db"
 	"github.com/alexzajac/the-dredger/internal/model"
+	"github.com/alexzajac/the-dredger/internal/urlutil"
 )
 
 // Export is the top-level JSON contract consumed by the static dashboard. It is
@@ -148,18 +147,6 @@ func aggregateDomains(links []model.Link) []Count {
 	return result
 }
 
-// domainOf extracts a normalized host from a raw URL: lowercased, without a
-// leading "www." and without any port. Returns "" when no host can be parsed
-// (e.g. relative paths or mailto: links).
-func domainOf(raw string) string {
-	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return ""
-	}
-	host := u.Hostname() // strips any :port
-	if host == "" {
-		return ""
-	}
-	host = strings.ToLower(host)
-	return strings.TrimPrefix(host, "www.")
-}
+// domainOf is an alias for urlutil.Domain, kept so the export code reads the
+// same as before the helper moved out of this package.
+func domainOf(raw string) string { return urlutil.Domain(raw) }

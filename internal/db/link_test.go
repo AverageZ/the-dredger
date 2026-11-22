@@ -8,6 +8,8 @@ import (
 	"github.com/alexzajac/the-dredger/internal/model"
 )
 
+const tagTest = "test"
+
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -29,7 +31,7 @@ func TestInsertAndGetLinks(t *testing.T) {
 		URL:         "https://example.com",
 		Title:       "Example",
 		Description: "An example site",
-		Tags:        []string{"test", "example"},
+		Tags:        []string{tagTest, "example"},
 		Status:      model.Unprocessed,
 	}
 
@@ -59,11 +61,49 @@ func TestInsertAndGetLinks(t *testing.T) {
 	if got.Description != link.Description {
 		t.Errorf("Description = %q, want %q", got.Description, link.Description)
 	}
-	if len(got.Tags) != 2 || got.Tags[0] != "test" || got.Tags[1] != "example" {
+	if len(got.Tags) != 2 || got.Tags[0] != tagTest || got.Tags[1] != "example" {
 		t.Errorf("Tags = %v, want [test example]", got.Tags)
 	}
 	if got.Status != model.Unprocessed {
 		t.Errorf("Status = %v, want Unprocessed", got.Status)
+	}
+}
+
+func TestGetLinkByID(t *testing.T) {
+	db := setupTestDB(t)
+	want := model.Link{
+		URL:         "https://example.com/bookmark",
+		Title:       "Bookmark",
+		Description: "A saved bookmark",
+		Tags:        []string{tagTest, "bookmark"},
+		Status:      model.Saved,
+	}
+	id, err := InsertLink(db, want)
+	if err != nil {
+		t.Fatalf("InsertLink: %v", err)
+	}
+	want.ID = id
+	if err := UpdateLink(db, want); err != nil {
+		t.Fatalf("UpdateLink: %v", err)
+	}
+
+	got, err := GetLinkByID(db, id)
+	if err != nil {
+		t.Fatalf("GetLinkByID: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetLinkByID returned nil for an inserted link")
+	}
+	if got.ID != want.ID || got.URL != want.URL || got.Title != want.Title {
+		t.Errorf("GetLinkByID = %+v, want ID=%d URL=%q Title=%q", got, want.ID, want.URL, want.Title)
+	}
+
+	missing, err := GetLinkByID(db, id+1)
+	if err != nil {
+		t.Fatalf("GetLinkByID missing: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("GetLinkByID missing = %+v, want nil", missing)
 	}
 }
 

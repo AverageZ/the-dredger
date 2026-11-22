@@ -302,7 +302,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case keyEsc:
 				a.showCollections = false
 				a.collections = nil
-			case "j", "down":
+			case "j", keyDown:
 				if a.collectionCursor < len(a.collections)-1 {
 					a.collectionCursor++
 					visibleRows := a.height - 10
@@ -313,7 +313,7 @@ func (a App) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 						a.collectionScroll = a.collectionCursor - visibleRows + 1
 					}
 				}
-			case "k", "up":
+			case "k", keyUp:
 				if a.collectionCursor > 0 {
 					a.collectionCursor--
 					if a.collectionCursor < a.collectionScroll {

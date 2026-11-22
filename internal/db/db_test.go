@@ -2,9 +2,15 @@ package db
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/alexzajac/the-dredger/internal/model"
+)
+
+const (
+	tagCLI    = "cli"
+	tagPython = "python"
 )
 
 func TestInitSchema_CreatesTable(t *testing.T) {
@@ -70,10 +76,10 @@ func TestGetTagCounts(t *testing.T) {
 
 	// Insert bookmark links with overlapping tags.
 	links := []model.Link{
-		{URL: "https://a.com", Tags: []string{"go", "cli"}, Status: model.Saved},
+		{URL: "https://a.com", Tags: []string{"go", tagCLI}, Status: model.Saved},
 		{URL: "https://b.com", Tags: []string{"go", "tui"}, Status: model.Saved},
-		{URL: "https://c.com", Tags: []string{"go", "cli", "sqlite"}, Status: model.Saved},
-		{URL: "https://d.com", Tags: []string{"python"}, Status: model.Unprocessed},
+		{URL: "https://c.com", Tags: []string{"go", tagCLI, "sqlite"}, Status: model.Saved},
+		{URL: "https://d.com", Tags: []string{tagPython}, Status: model.Unprocessed},
 	}
 	for _, l := range links {
 		id, err := InsertLink(db, l)
@@ -110,6 +116,41 @@ func TestGetTagCounts(t *testing.T) {
 	}
 	if counts[4].Tag != "tui" {
 		t.Errorf("fifth tag = %q, want tui", counts[4].Tag)
+	}
+}
+
+func TestOpenReadOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "readonly.db")
+	writeDB, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := InitSchema(writeDB); err != nil {
+		t.Fatalf("InitSchema: %v", err)
+	}
+	if _, err := InsertLink(writeDB, model.Link{URL: "https://readonly.example"}); err != nil {
+		t.Fatalf("InsertLink: %v", err)
+	}
+	if err := writeDB.Close(); err != nil {
+		t.Fatalf("close write database: %v", err)
+	}
+
+	readDB, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("OpenReadOnly: %v", err)
+	}
+	t.Cleanup(func() { _ = readDB.Close() })
+
+	var timeout int
+	if err := readDB.QueryRow("PRAGMA busy_timeout").Scan(&timeout); err != nil {
+		t.Fatalf("query busy timeout: %v", err)
+	}
+	if timeout != busyTimeoutMS {
+		t.Errorf("busy timeout = %d, want %d", timeout, busyTimeoutMS)
+	}
+
+	if _, err := readDB.Exec(`INSERT INTO links (url) VALUES ('https://write.example')`); err == nil {
+		t.Error("read-only database accepted a write")
 	}
 }
 

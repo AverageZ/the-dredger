@@ -8,17 +8,22 @@ import (
 	"github.com/alexzajac/the-dredger/internal/model"
 )
 
+const (
+	githubDomain  = "github.com"
+	exampleDomain = "example.com"
+)
+
 func TestDomainOf(t *testing.T) {
 	tests := []struct {
 		name string
 		url  string
 		want string
 	}{
-		{"simple", "https://github.com/foo", "github.com"},
-		{"strips www", "https://www.example.com/path", "example.com"},
+		{"simple", "https://github.com/foo", githubDomain},
+		{"strips www", "https://www.example.com/path", exampleDomain},
 		{"strips port", "http://localhost:8080/x", "localhost"},
-		{"uppercase host", "https://GitHub.COM/a", "github.com"},
-		{"www and port", "https://www.example.com:443/", "example.com"},
+		{"uppercase host", "https://GitHub.COM/a", githubDomain},
+		{"www and port", "https://www.example.com:443/", exampleDomain},
 		{"relative path", "/just/a/path", ""},
 		{"mailto", "mailto:someone@example.com", ""},
 		{"empty", "", ""},
@@ -48,10 +53,10 @@ func TestAggregateDomains(t *testing.T) {
 		t.Fatalf("expected 2 domains, got %d: %+v", len(got), got)
 	}
 	// Sorted by count desc: github.com (3) before example.com (1).
-	if got[0].Label != "github.com" || got[0].Count != 3 {
+	if got[0].Label != githubDomain || got[0].Count != 3 {
 		t.Errorf("got[0] = %+v, want {github.com 3}", got[0])
 	}
-	if got[1].Label != "example.com" || got[1].Count != 1 {
+	if got[1].Label != exampleDomain || got[1].Count != 1 {
 		t.Errorf("got[1] = %+v, want {example.com 1}", got[1])
 	}
 }

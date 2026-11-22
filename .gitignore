@@ -27,8 +27,8 @@ go.work.sum
 # env file
 .env
 
-# Binary
-dredger
+# Binary (anchored to repo root so it does not also ignore the cmd/dredger/ dir)
+/dredger
 
 # Editor/IDE
 # .idea/

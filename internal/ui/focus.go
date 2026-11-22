@@ -211,7 +211,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 	}
 
 	switch msg.String() {
-	case "down", "n":
+	case keyDown, "n":
 		if f.current == nil || f.next == nil {
 			return f, nil
 		}
@@ -221,7 +221,7 @@ func (f FocusModel) updateNormal(msg tea.KeyPressMsg) (FocusModel, tea.Cmd) {
 		f.descScroll = 0
 		return f, f.prefetchNextLink
 
-	case "up", "p":
+	case keyUp, "p":
 		if len(f.browseHistory) == 0 {
 			return f, f.loadPreviousLink
 		}

@@ -8,6 +8,8 @@ import (
 	"github.com/alexzajac/the-dredger/internal/db"
 )
 
+const duplicateURL = "https://dup.com"
+
 func TestExtractURLs(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -26,8 +28,8 @@ func TestExtractURLs(t *testing.T) {
 		},
 		{
 			name:  "deduplicates",
-			input: "https://dup.com and https://dup.com again",
-			want:  []string{"https://dup.com"},
+			input: "https://dup.com and " + duplicateURL + " again",
+			want:  []string{duplicateURL},
 		},
 		{
 			name:  "trailing punctuation stripped",
